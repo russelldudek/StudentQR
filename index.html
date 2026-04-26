@@ -328,6 +328,23 @@
       }
     }
 
+    async function parseApiResponse(res) {
+      const contentType = res.headers.get('content-type') || '';
+      const text = await res.text();
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      if (contentType.includes('application/json')) {
+        return JSON.parse(text);
+      }
+      try {
+        return JSON.parse(text);
+      } catch {
+        if (/Script function not found:\s*doGet/i.test(text)) {
+          throw new Error('Apps Script endpoint is missing doGet. Use POST-only fallback for roster load or add doGet in Apps Script.');
+        }
+        throw new Error('Endpoint did not return JSON. Confirm Apps Script is deployed as a Web App and accessible to your users.');
+      }
+    }
+
     async function callApi(action, payload = {}, method = 'POST') {
       const cfg = state.config || getConfigFromInputs();
       if (!cfg?.apiUrl) throw new Error('Missing Apps Script URL in setup.');
@@ -337,8 +354,7 @@
         url.searchParams.set('action', action);
         url.searchParams.set('sheetName', cfg.sheetName);
         const res = await fetch(url, { method: 'GET' });
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
+        return parseApiResponse(res);
       }
 
       const res = await fetch(cfg.apiUrl, {
@@ -350,8 +366,7 @@
           ...payload,
         })
       });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      return res.json();
+      return parseApiResponse(res);
     }
 
     function normalizeRows(rows) {
@@ -374,7 +389,13 @@
     async function loadRoster() {
       try {
         saveConfig();
-        const data = await callApi('list', {}, 'GET');
+        let data;
+        try {
+          data = await callApi('list', {}, 'GET');
+        } catch (err) {
+          console.warn('GET list failed, retrying with POST list.', err);
+          data = await callApi('list', {});
+        }
         const rows = Array.isArray(data.rows) ? data.rows : [];
         state.rows = normalizeRows(rows);
         renderDashboard();
