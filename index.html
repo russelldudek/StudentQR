@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student QR Admissions Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #111827;
+      --card: #1f2937;
+      --accent: #22c55e;
+      --accent-2: #38bdf8;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --danger: #ef4444;
+      --ok: #10b981;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: linear-gradient(120deg, #0f172a 0%, #020617 70%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1, h2, h3 { margin-top: 0; }
+    .card {
+      background: rgba(31, 41, 55, 0.92);
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 12px;
+    }
+    label { display: block; font-weight: 600; margin-bottom: 6px; }
+    input, select, button, textarea {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0b1220;
+      color: var(--text);
+      padding: 10px;
+      font: inherit;
+    }
+    textarea { min-height: 88px; }
+    button {
+      cursor: pointer;
+      background: var(--accent-2);
+      color: #001826;
+      border: none;
+      font-weight: 700;
+      transition: transform 0.08s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    .btn-secondary {
+      background: #334155;
+      color: var(--text);
+    }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row > * { flex: 1 1 170px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    .stat {
+      background: #0b1220;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .stat .value { font-size: 1.45rem; font-weight: 800; }
+    .muted { color: var(--muted); font-size: 0.92rem; }
+    .status-pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .status-admitted { background: rgba(16,185,129,.2); color: #6ee7b7; }
+    .status-registered { background: rgba(56,189,248,.18); color: #93c5fd; }
+    .status-missing { background: rgba(239,68,68,.18); color: #fca5a5; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+    th, td {
+      border-bottom: 1px solid #334155;
+      text-align: left;
+      padding: 8px;
+    }
+    #video {
+      width: 100%;
+      max-width: 420px;
+      border-radius: 12px;
+      border: 1px solid #334155;
+      background: #000;
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    .tab.active { background: var(--accent); color: #052814; }
+    .hidden { display: none; }
+    .toast {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      background: #0b1220;
+      border: 1px solid #334155;
+      border-left: 4px solid var(--ok);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      max-width: 360px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.35);
+      z-index: 999;
+    }
+    a { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Student QR Admissions</h1>
+    <p class="muted">Publish this file on GitHub Pages, complete setup once, then run check-in from any device.</p>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="setup">Setup</button>
+      <button class="tab" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="scanner">Scanner</button>
+    </div>
+
+    <section id="setup" class="card">
+      <h2>1) Setup Google Sheet + Workflow</h2>
+      <p class="muted">
+        GitHub Pages is static, so writing to Google Sheets requires a middleware endpoint (typically a Google Apps Script Web App URL).
+        Add it below so this app can read/update attendee rows.
+      </p>
+      <div class="grid">
+        <div>
+          <label for="sheetUrl">Google Sheet URL</label>
+          <input id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..." />
+        </div>
+        <div>
+          <label for="apiUrl">Apps Script Web App URL</label>
+          <input id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec" />
+        </div>
+        <div>
+          <label for="sheetName">Worksheet tab name</label>
+          <input id="sheetName" placeholder="Students" value="Students" />
+        </div>
+      </div>
+
+      <h3>2) Student columns</h3>
+      <div class="grid">
+        <div>
+          <label for="firstNameCol">First name column header</label>
+          <input id="firstNameCol" placeholder="First Name" value="First Name" />
+        </div>
+        <div>
+          <label for="lastNameCol">Last name column header</label>
+          <input id="lastNameCol" placeholder="Last Name" value="Last Name" />
+        </div>
+        <div>
+          <label for="qrCol">QR code value column header</label>
+          <input id="qrCol" placeholder="QR_ID" value="QR_ID" />
+        </div>
+      </div>
+
+      <h3>3) Additional setup questions</h3>
+      <div class="grid">
+        <div>
+          <label for="statusCol">Admission status column</label>
+          <input id="statusCol" placeholder="Status" value="Status" />
+        </div>
+        <div>
+          <label for="admittedAtCol">Timestamp column</label>
+          <input id="admittedAtCol" placeholder="Admitted At" value="Admitted At" />
+        </div>
+        <div>
+          <label for="eventName">Event name</label>
+          <input id="eventName" placeholder="Spring Dance 2026" />
+        </div>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="allowedStatuses">Allowed pre-admit statuses (comma separated)</label>
+          <input id="allowedStatuses" value="Registered" />
+        </div>
+        <div>
+          <label for="admittedValue">Value to write when admitted</label>
+          <input id="admittedValue" value="Admitted" />
+        </div>
+        <div>
+          <label for="timeZone">Timezone for timestamp</label>
+          <input id="timeZone" value="America/New_York" />
+        </div>
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <button id="saveConfig">Save setup</button>
+        <button id="loadData" class="btn-secondary">Load roster from sheet</button>
+        <button id="resetConfig" class="btn-danger">Reset saved setup</button>
+      </div>
+      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record.</p>
+    </section>
+
+    <section id="dashboard" class="card hidden">
+      <h2>Dashboard</h2>
+      <div class="stats" id="stats"></div>
+      <div class="row" style="margin:12px 0;">
+        <input id="searchInput" placeholder="Search by name or QR value" />
+        <button id="refreshBtn" class="btn-secondary">Refresh</button>
+      </div>
+      <div style="max-height: 380px; overflow: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>QR</th>
+              <th>Status</th>
+              <th>Admitted At</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="scanner" class="card hidden">
+      <h2>Scanner Workflow</h2>
+      <p class="muted">Scan QR code → look up student by QR value → write "Admitted" status and timestamp to sheet.</p>
+      <div class="row">
+        <div>
+          <video id="video" autoplay playsinline muted></video>
+          <div class="row" style="margin-top:8px;">
+            <button id="startScan">Start camera scan</button>
+            <button id="stopScan" class="btn-secondary">Stop scan</button>
+          </div>
+        </div>
+        <div>
+          <label for="manualQr">Manual QR value input (fallback)</label>
+          <input id="manualQr" placeholder="Paste scanned value" />
+          <button id="manualSubmit" style="margin-top: 8px;">Mark admitted</button>
+          <h3 style="margin-top:16px;">Last scan result</h3>
+          <div id="scanResult" class="stat">
+            <div class="value">Waiting...</div>
+            <div class="muted">No scan yet.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      config: null,
+      rows: [],
+      stream: null,
+      scanning: false,
+      detector: null,
+    };
+
+    const ids = (id) => document.getElementById(id);
+
+    const fields = [
+      'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
+      'admittedAtCol', 'eventName', 'allowedStatuses', 'admittedValue', 'timeZone'
+    ];
+
+    function toast(msg, ok = true) {
+      const div = document.createElement('div');
+      div.className = 'toast';
+      div.style.borderLeftColor = ok ? 'var(--ok)' : 'var(--danger)';
+      div.textContent = msg;
+      document.body.appendChild(div);
+      setTimeout(() => div.remove(), 3200);
+    }
+
+    function getConfigFromInputs() {
+      const cfg = {};
+      for (const f of fields) cfg[f] = ids(f).value.trim();
+      cfg.allowedStatuses = cfg.allowedStatuses.split(',').map(s => s.trim()).filter(Boolean);
+      return cfg;
+    }
+
+    function fillInputsFromConfig(cfg) {
+      if (!cfg) return;
+      for (const f of fields) {
+        if (!(f in cfg)) continue;
+        ids(f).value = Array.isArray(cfg[f]) ? cfg[f].join(', ') : cfg[f];
+      }
+    }
+
+    function saveConfig() {
+      const cfg = getConfigFromInputs();
+      if (!cfg.apiUrl || !cfg.sheetUrl || !cfg.firstNameCol || !cfg.lastNameCol || !cfg.qrCol) {
+        toast('Please complete required setup fields.', false);
+        return;
+      }
+      localStorage.setItem('studentQrConfig', JSON.stringify(cfg));
+      state.config = cfg;
+      toast('Setup saved locally.');
+    }
+
+    function loadSavedConfig() {
+      const raw = localStorage.getItem('studentQrConfig');
+      if (!raw) return;
+      try {
+        const cfg = JSON.parse(raw);
+        state.config = cfg;
+        fillInputsFromConfig(cfg);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function callApi(action, payload = {}, method = 'POST') {
+      const cfg = state.config || getConfigFromInputs();
+      if (!cfg?.apiUrl) throw new Error('Missing Apps Script URL in setup.');
+
+      if (method === 'GET') {
+        const url = new URL(cfg.apiUrl);
+        url.searchParams.set('action', action);
+        url.searchParams.set('sheetName', cfg.sheetName);
+        const res = await fetch(url, { method: 'GET' });
+        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        return res.json();
+      }
+
+      const res = await fetch(cfg.apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          config: cfg,
+          ...payload,
+        })
+      });
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res.json();
+    }
+
+    function normalizeRows(rows) {
+      const cfg = state.config;
+      return rows.map((r) => {
+        const first = r[cfg.firstNameCol] || '';
+        const last = r[cfg.lastNameCol] || '';
+        return {
+          raw: r,
+          name: `${first} ${last}`.trim(),
+          first,
+          last,
+          qr: r[cfg.qrCol] || '',
+          status: r[cfg.statusCol] || 'Missing',
+          admittedAt: r[cfg.admittedAtCol] || '',
+        };
+      });
+    }
+
+    async function loadRoster() {
+      try {
+        saveConfig();
+        const data = await callApi('list', {}, 'GET');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        state.rows = normalizeRows(rows);
+        renderDashboard();
+        toast(`Loaded ${state.rows.length} students.`);
+      } catch (err) {
+        toast(err.message, false);
+      }
+    }
+
+    function renderDashboard() {
+      const body = ids('tableBody');
+      const search = ids('searchInput')?.value?.trim()?.toLowerCase() || '';
+      const filtered = state.rows.filter((r) =>
+        !search || `${r.name} ${r.qr} ${r.status}`.toLowerCase().includes(search)
+      );
+
+      body.innerHTML = filtered.map((r) => {
+        const statusClass = String(r.status).toLowerCase().includes('admit')
+          ? 'status-admitted'
+          : String(r.status).toLowerCase().includes('register')
+            ? 'status-registered'
+            : 'status-missing';
+        return `
+          <tr>
+            <td>${escapeHtml(r.name || '(No name)')}</td>
+            <td>${escapeHtml(r.qr)}</td>
+            <td><span class="status-pill ${statusClass}">${escapeHtml(String(r.status))}</span></td>
+            <td>${escapeHtml(r.admittedAt)}</td>
+          </tr>`;
+      }).join('');
+
+      const total = state.rows.length;
+      const admitted = state.rows.filter(r => String(r.status).toLowerCase().includes('admit')).length;
+      const registered = state.rows.filter(r => String(r.status).toLowerCase().includes('register')).length;
+      const missing = total - admitted - registered;
+
+      ids('stats').innerHTML = `
+        <div class="stat"><div class="muted">Total</div><div class="value">${total}</div></div>
+        <div class="stat"><div class="muted">Admitted</div><div class="value">${admitted}</div></div>
+        <div class="stat"><div class="muted">Registered</div><div class="value">${registered}</div></div>
+        <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
+      `;
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    async function admitByQr(qrValue) {
+      if (!qrValue) return toast('Missing QR value.', false);
+      try {
+        const res = await callApi('admit', { qrValue });
+        const row = res.row || null;
+        if (!row) {
+          ids('scanResult').innerHTML = '<div class="value">Not found</div><div class="muted">No matching student row.</div>';
+          return toast('Student not found for this QR value.', false);
+        }
+
+        const cfg = state.config;
+        const displayName = `${row[cfg.firstNameCol] || ''} ${row[cfg.lastNameCol] || ''}`.trim();
+        ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
+          <div class="muted">Marked as ${escapeHtml(row[cfg.statusCol] || cfg.admittedValue)} at ${escapeHtml(row[cfg.admittedAtCol] || '-')}.</div>`;
+
+        await loadRoster();
+        toast(`Admitted: ${displayName || qrValue}`);
+      } catch (err) {
+        toast(err.message, false);
+      }
+    }
+
+    async function startScanning() {
+      if (state.scanning) return;
+      const video = ids('video');
+
+      if (!('BarcodeDetector' in window)) {
+        toast('BarcodeDetector not supported in this browser. Use manual input or a Chromium browser.', false);
+        return;
+      }
+
+      state.detector = new BarcodeDetector({ formats: ['qr_code'] });
+      state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = state.stream;
+      state.scanning = true;
+
+      const loop = async () => {
+        if (!state.scanning) return;
+        try {
+          const codes = await state.detector.detect(video);
+          if (codes.length > 0 && codes[0].rawValue) {
+            state.scanning = false;
+            stopScanning();
+            ids('manualQr').value = codes[0].rawValue;
+            await admitByQr(codes[0].rawValue.trim());
+            return;
+          }
+        } catch (err) {
+          console.warn(err);
+        }
+        requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    }
+
+    function stopScanning() {
+      state.scanning = false;
+      if (state.stream) {
+        for (const track of state.stream.getTracks()) track.stop();
+        state.stream = null;
+      }
+      ids('video').srcObject = null;
+    }
+
+    function setTab(tab) {
+      document.querySelectorAll('.tab').forEach((b) => {
+        b.classList.toggle('active', b.dataset.tab === tab);
+      });
+      ['setup', 'dashboard', 'scanner'].forEach((id) => {
+        ids(id).classList.toggle('hidden', id !== tab);
+      });
+    }
+
+    function bindEvents() {
+      document.querySelectorAll('.tab').forEach((btn) => {
+        btn.addEventListener('click', () => setTab(btn.dataset.tab));
+      });
+      ids('saveConfig').addEventListener('click', saveConfig);
+      ids('loadData').addEventListener('click', loadRoster);
+      ids('refreshBtn').addEventListener('click', loadRoster);
+      ids('searchInput').addEventListener('input', renderDashboard);
+      ids('startScan').addEventListener('click', startScanning);
+      ids('stopScan').addEventListener('click', stopScanning);
+      ids('manualSubmit').addEventListener('click', () => admitByQr(ids('manualQr').value.trim()));
+      ids('resetConfig').addEventListener('click', () => {
+        localStorage.removeItem('studentQrConfig');
+        state.config = null;
+        toast('Saved setup cleared.');
+      });
+    }
+
+    loadSavedConfig();
+    bindEvents();
+    renderDashboard();
+  </script>
+</body>
+</html>
