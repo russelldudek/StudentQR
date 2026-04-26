@@ -345,6 +345,17 @@
       }
     }
 
+    function toFriendlyError(err) {
+      const message = err?.message || String(err || 'Unknown error');
+      if (message === 'Failed to fetch' || message === 'Load failed') {
+        return new Error(
+          'Network request failed. This is often a CORS/preflight issue with Apps Script. ' +
+          'Re-deploy the Web App and ensure access is set to "Anyone with the link".'
+        );
+      }
+      return err instanceof Error ? err : new Error(message);
+    }
+
     async function callApi(action, payload = {}, method = 'POST') {
       const cfg = state.config || getConfigFromInputs();
       if (!cfg?.apiUrl) throw new Error('Missing Apps Script URL in setup.');
@@ -353,20 +364,30 @@
         const url = new URL(cfg.apiUrl);
         url.searchParams.set('action', action);
         url.searchParams.set('sheetName', cfg.sheetName);
-        const res = await fetch(url, { method: 'GET' });
-        return parseApiResponse(res);
+        try {
+          const res = await fetch(url, { method: 'GET' });
+          return parseApiResponse(res);
+        } catch (err) {
+          throw toFriendlyError(err);
+        }
       }
 
-      const res = await fetch(cfg.apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          config: cfg,
-          ...payload,
-        })
-      });
-      return parseApiResponse(res);
+      try {
+        // Use text/plain to avoid CORS preflight that often causes "Load failed"
+        // with Google Apps Script web apps.
+        const res = await fetch(cfg.apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action,
+            config: cfg,
+            ...payload,
+          })
+        });
+        return parseApiResponse(res);
+      } catch (err) {
+        throw toFriendlyError(err);
+      }
     }
 
     function normalizeRows(rows) {
@@ -401,7 +422,7 @@
         renderDashboard();
         toast(`Loaded ${state.rows.length} students.`);
       } catch (err) {
-        toast(err.message, false);
+        toast(toFriendlyError(err).message, false);
       }
     }
 
@@ -467,7 +488,7 @@
         await loadRoster();
         toast(`Admitted: ${displayName || qrValue}`);
       } catch (err) {
-        toast(err.message, false);
+        toast(toFriendlyError(err).message, false);
       }
     }
 
