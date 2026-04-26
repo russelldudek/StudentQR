@@ -407,6 +407,14 @@
       });
     }
 
+    function extractRowsFromResponse(data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.rows)) return data.rows;
+      if (Array.isArray(data?.data)) return data.data;
+      if (Array.isArray(data?.result)) return data.result;
+      return [];
+    }
+
     async function loadRoster() {
       try {
         saveConfig();
@@ -417,7 +425,7 @@
           console.warn('GET list failed, retrying with POST list.', err);
           data = await callApi('list', {});
         }
-        const rows = Array.isArray(data.rows) ? data.rows : [];
+        const rows = extractRowsFromResponse(data);
         state.rows = normalizeRows(rows);
         renderDashboard();
         toast(`Loaded ${state.rows.length} students.`);
