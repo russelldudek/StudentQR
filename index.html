@@ -390,9 +390,47 @@
       }
     }
 
+    function extractRowsFromResponse(data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.rows)) return data.rows;
+      if (Array.isArray(data?.data)) return data.data;
+      if (Array.isArray(data?.result)) return data.result;
+      if (Array.isArray(data?.values)) return data.values;
+      if (Array.isArray(data?.students)) return data.students;
+
+      if (typeof data?.rows === 'string') {
+        try {
+          const parsed = JSON.parse(data.rows);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // Ignore parse errors and continue fallback handling.
+        }
+      }
+
+      return [];
+    }
+
+    function toObjectRows(rows) {
+      if (!rows.length) return [];
+
+      if (!Array.isArray(rows[0])) return rows;
+
+      const headerRow = rows[0].map((v) => String(v || '').trim());
+      return rows.slice(1).map((rowValues) => {
+        const rowObj = {};
+        headerRow.forEach((header, idx) => {
+          if (!header) return;
+          rowObj[header] = rowValues[idx] ?? '';
+        });
+        return rowObj;
+      });
+    }
+
     function normalizeRows(rows) {
       const cfg = state.config;
-      return rows.map((r) => {
+      const objectRows = toObjectRows(rows);
+
+      return objectRows.map((r) => {
         const first = r[cfg.firstNameCol] || '';
         const last = r[cfg.lastNameCol] || '';
         return {
@@ -405,14 +443,6 @@
           admittedAt: r[cfg.admittedAtCol] || '',
         };
       });
-    }
-
-    function extractRowsFromResponse(data) {
-      if (Array.isArray(data)) return data;
-      if (Array.isArray(data?.rows)) return data.rows;
-      if (Array.isArray(data?.data)) return data.data;
-      if (Array.isArray(data?.result)) return data.result;
-      return [];
     }
 
     async function loadRoster() {
