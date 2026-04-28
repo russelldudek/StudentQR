@@ -363,9 +363,35 @@
       if (method === 'GET') {
         const url = new URL(cfg.apiUrl);
         url.searchParams.set('action', action);
-        url.searchParams.set('sheetName', cfg.sheetName);
+
+        // Send full setup in query params because many Apps Script doGet handlers
+        // read from e.parameter instead of persisted server-side config.
+        const queryConfig = {
+          sheetUrl: cfg.sheetUrl,
+          sheetName: cfg.sheetName,
+          firstNameCol: cfg.firstNameCol,
+          lastNameCol: cfg.lastNameCol,
+          qrCol: cfg.qrCol,
+          statusCol: cfg.statusCol,
+          admittedAtCol: cfg.admittedAtCol,
+          eventName: cfg.eventName,
+          admittedValue: cfg.admittedValue,
+          timeZone: cfg.timeZone,
+          allowedStatuses: Array.isArray(cfg.allowedStatuses)
+            ? cfg.allowedStatuses.join(',')
+            : String(cfg.allowedStatuses || ''),
+        };
+
+        Object.entries(queryConfig).forEach(([key, value]) => {
+          if (value === undefined || value === null || String(value).trim() === '') return;
+          url.searchParams.set(key, String(value));
+        });
+
+        // Reduce stale responses from intermediary caching.
+        url.searchParams.set('_ts', String(Date.now()));
+
         try {
-          const res = await fetch(url, { method: 'GET' });
+          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
           return parseApiResponse(res);
         } catch (err) {
           throw toFriendlyError(err);
@@ -397,6 +423,13 @@
       if (Array.isArray(data?.result)) return data.result;
       if (Array.isArray(data?.values)) return data.values;
       if (Array.isArray(data?.students)) return data.students;
+
+      // Fallback: some endpoints return { "Students": [...] } or similar.
+      if (data && typeof data === 'object') {
+        for (const value of Object.values(data)) {
+          if (Array.isArray(value)) return value;
+        }
+      }
 
       if (typeof data?.rows === 'string') {
         try {
