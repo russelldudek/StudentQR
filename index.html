@@ -391,23 +391,44 @@
     }
 
     function extractRowsFromResponse(data) {
-      if (Array.isArray(data)) return data;
-      if (Array.isArray(data?.rows)) return data.rows;
-      if (Array.isArray(data?.data)) return data.data;
-      if (Array.isArray(data?.result)) return data.result;
-      if (Array.isArray(data?.values)) return data.values;
-      if (Array.isArray(data?.students)) return data.students;
+      const likelyArrayKeys = ['rows', 'data', 'result', 'values', 'students', 'items', 'records'];
 
-      if (typeof data?.rows === 'string') {
+      function parseMaybeJson(value) {
+        if (typeof value !== 'string') return value;
         try {
-          const parsed = JSON.parse(data.rows);
-          if (Array.isArray(parsed)) return parsed;
+          return JSON.parse(value);
         } catch {
-          // Ignore parse errors and continue fallback handling.
+          return value;
         }
       }
 
-      return [];
+      function findRows(value, depth = 0) {
+        if (depth > 5 || value == null) return null;
+
+        const parsedValue = parseMaybeJson(value);
+
+        if (Array.isArray(parsedValue)) {
+          return parsedValue;
+        }
+
+        if (typeof parsedValue !== 'object') {
+          return null;
+        }
+
+        for (const key of likelyArrayKeys) {
+          const child = parseMaybeJson(parsedValue[key]);
+          if (Array.isArray(child)) return child;
+        }
+
+        for (const nested of Object.values(parsedValue)) {
+          const match = findRows(nested, depth + 1);
+          if (Array.isArray(match)) return match;
+        }
+
+        return null;
+      }
+
+      return findRows(data) || [];
     }
 
     function toObjectRows(rows) {
