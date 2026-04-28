@@ -338,10 +338,16 @@
       try {
         return JSON.parse(text);
       } catch {
-        if (/Script function not found:\s*doGet/i.test(text)) {
-          throw new Error('Apps Script endpoint is missing doGet. Use POST-only fallback for roster load or add doGet in Apps Script.');
+        // Some backends prepend anti-XSSI guards before JSON.
+        const cleaned = text.replace(/^\)\]\}'\s*/, '');
+        try {
+          return JSON.parse(cleaned);
+        } catch {
+          if (/Script function not found:\s*doGet/i.test(text)) {
+            throw new Error('Apps Script endpoint is missing doGet. Use POST-only fallback for roster load or add doGet in Apps Script.');
+          }
+          throw new Error('Endpoint did not return JSON. Confirm Apps Script is deployed as a Web App and accessible to your users.');
         }
-        throw new Error('Endpoint did not return JSON. Confirm Apps Script is deployed as a Web App and accessible to your users.');
       }
     }
 
@@ -363,9 +369,35 @@
       if (method === 'GET') {
         const url = new URL(cfg.apiUrl);
         url.searchParams.set('action', action);
-        url.searchParams.set('sheetName', cfg.sheetName);
+
+        // Send full setup in query params because many Apps Script doGet handlers
+        // read from e.parameter instead of persisted server-side config.
+        const queryConfig = {
+          sheetUrl: cfg.sheetUrl,
+          sheetName: cfg.sheetName,
+          firstNameCol: cfg.firstNameCol,
+          lastNameCol: cfg.lastNameCol,
+          qrCol: cfg.qrCol,
+          statusCol: cfg.statusCol,
+          admittedAtCol: cfg.admittedAtCol,
+          eventName: cfg.eventName,
+          admittedValue: cfg.admittedValue,
+          timeZone: cfg.timeZone,
+          allowedStatuses: Array.isArray(cfg.allowedStatuses)
+            ? cfg.allowedStatuses.join(',')
+            : String(cfg.allowedStatuses || ''),
+        };
+
+        Object.entries(queryConfig).forEach(([key, value]) => {
+          if (value === undefined || value === null || String(value).trim() === '') return;
+          url.searchParams.set(key, String(value));
+        });
+
+        // Reduce stale responses from intermediary caching.
+        url.searchParams.set('_ts', String(Date.now()));
+
         try {
-          const res = await fetch(url, { method: 'GET' });
+          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
           return parseApiResponse(res);
         } catch (err) {
           throw toFriendlyError(err);
@@ -390,6 +422,26 @@
       }
     }
 
+    function findFirstArray(value, depth = 0) {
+      if (Array.isArray(value)) return value;
+      if (!value || typeof value !== 'object' || depth > 4) return null;
+      for (const nested of Object.values(value)) {
+        const found = findFirstArray(nested, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function getApiMessage(data) {
+      if (!data || typeof data !== 'object') return '';
+      const messageKeys = ['message', 'error', 'details', 'reason'];
+      for (const key of messageKeys) {
+        const val = data[key];
+        if (typeof val === 'string' && val.trim()) return val.trim();
+      }
+      return '';
+    }
+
     function extractRowsFromResponse(data) {
       if (Array.isArray(data)) return data;
       if (Array.isArray(data?.rows)) return data.rows;
@@ -397,6 +449,10 @@
       if (Array.isArray(data?.result)) return data.result;
       if (Array.isArray(data?.values)) return data.values;
       if (Array.isArray(data?.students)) return data.students;
+
+      // Fallback: some endpoints return nested arrays under varying keys.
+      const foundArray = findFirstArray(data);
+      if (Array.isArray(foundArray)) return foundArray;
 
       if (typeof data?.rows === 'string') {
         try {
@@ -488,6 +544,15 @@
         const rows = extractRowsFromResponse(data);
         state.rows = normalizeRows(rows);
         renderDashboard();
+        if (!state.rows.length) {
+          const backendMessage = getApiMessage(data);
+          if (backendMessage) {
+            toast(`No students returned: ${backendMessage}`, false);
+          } else {
+            toast('No students were returned. Verify sheet tab name, column headers, and Apps Script permissions.', false);
+          }
+          return;
+        }
         toast(`Loaded ${state.rows.length} students.`);
       } catch (err) {
         toast(toFriendlyError(err).message, false);
