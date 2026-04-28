@@ -426,21 +426,51 @@
       });
     }
 
+    function normalizeKey(value) {
+      return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+    }
+
+    function readRowValue(row, preferredKey, fallbacks = []) {
+      if (!row || typeof row !== 'object') return '';
+
+      const direct = row[preferredKey];
+      if (direct !== undefined && direct !== null && String(direct).trim() !== '') {
+        return direct;
+      }
+
+      const allCandidates = [preferredKey, ...fallbacks]
+        .map((k) => String(k || '').trim())
+        .filter(Boolean);
+      if (!allCandidates.length) return '';
+
+      const normalizedCandidates = new Set(allCandidates.map(normalizeKey));
+      for (const [key, value] of Object.entries(row)) {
+        if (!normalizedCandidates.has(normalizeKey(key))) continue;
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+          return value;
+        }
+      }
+
+      return '';
+    }
+
     function normalizeRows(rows) {
       const cfg = state.config;
       const objectRows = toObjectRows(rows);
 
       return objectRows.map((r) => {
-        const first = r[cfg.firstNameCol] || '';
-        const last = r[cfg.lastNameCol] || '';
+        const first = readRowValue(r, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']);
+        const last = readRowValue(r, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']);
         return {
           raw: r,
           name: `${first} ${last}`.trim(),
           first,
           last,
-          qr: r[cfg.qrCol] || '',
-          status: r[cfg.statusCol] || 'Missing',
-          admittedAt: r[cfg.admittedAtCol] || '',
+          qr: readRowValue(r, cfg.qrCol, ['QR_ID', 'QR', 'qr']),
+          status: readRowValue(r, cfg.statusCol, ['Status']) || 'Missing',
+          admittedAt: readRowValue(r, cfg.admittedAtCol, ['Admitted At', 'admitted_at']),
         };
       });
     }
@@ -519,9 +549,9 @@
         }
 
         const cfg = state.config;
-        const displayName = `${row[cfg.firstNameCol] || ''} ${row[cfg.lastNameCol] || ''}`.trim();
+        const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
         ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
-          <div class="muted">Marked as ${escapeHtml(row[cfg.statusCol] || cfg.admittedValue)} at ${escapeHtml(row[cfg.admittedAtCol] || '-')}.</div>`;
+          <div class="muted">Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.</div>`;
 
         await loadRoster();
         toast(`Admitted: ${displayName || qrValue}`);
