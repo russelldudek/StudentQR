@@ -331,12 +331,15 @@
     async function parseApiResponse(res) {
       const contentType = res.headers.get('content-type') || '';
       const text = await res.text();
+      const cleanedText = String(text || '')
+        .replace(/^\)\]\}'\s*,?\s*/, '')
+        .trim();
       if (!res.ok) throw new Error(`API error: ${res.status}`);
       if (contentType.includes('application/json')) {
-        return JSON.parse(text);
+        return JSON.parse(cleanedText);
       }
       try {
-        return JSON.parse(text);
+        return JSON.parse(cleanedText);
       } catch {
         if (/Script function not found:\s*doGet/i.test(text)) {
           throw new Error('Apps Script endpoint is missing doGet. Use POST-only fallback for roster load or add doGet in Apps Script.');
@@ -356,6 +359,23 @@
       return err instanceof Error ? err : new Error(message);
     }
 
+    function addConfigToUrl(url, cfg, payload = {}) {
+      const queryValues = {
+        ...cfg,
+        ...payload,
+        config: JSON.stringify(cfg),
+      };
+
+      for (const [key, value] of Object.entries(queryValues)) {
+        if (value == null) continue;
+        const normalizedValue = Array.isArray(value) ? value.join(',') : String(value).trim();
+        if (!normalizedValue) continue;
+        url.searchParams.set(key, normalizedValue);
+      }
+
+      url.searchParams.set('_ts', String(Date.now()));
+    }
+
     async function callApi(action, payload = {}, method = 'POST') {
       const cfg = state.config || getConfigFromInputs();
       if (!cfg?.apiUrl) throw new Error('Missing Apps Script URL in setup.');
@@ -363,9 +383,9 @@
       if (method === 'GET') {
         const url = new URL(cfg.apiUrl);
         url.searchParams.set('action', action);
-        url.searchParams.set('sheetName', cfg.sheetName);
+        addConfigToUrl(url, cfg, payload);
         try {
-          const res = await fetch(url, { method: 'GET' });
+          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
           return parseApiResponse(res);
         } catch (err) {
           throw toFriendlyError(err);
@@ -429,6 +449,52 @@
       }
 
       return findRows(data) || [];
+    }
+
+    function extractBackendMessage(data) {
+      const likelyMessageKeys = ['message', 'error', 'details', 'detail', 'warning'];
+
+      function findMessage(value, depth = 0) {
+        if (depth > 5 || value == null) return '';
+
+        const parsedValue = typeof value === 'string'
+          ? (() => {
+              try {
+                return JSON.parse(value);
+              } catch {
+                return value;
+              }
+            })()
+          : value;
+
+        if (typeof parsedValue === 'string') {
+          return '';
+        }
+
+        if (Array.isArray(parsedValue)) {
+          return '';
+        }
+
+        if (typeof parsedValue !== 'object') {
+          return '';
+        }
+
+        for (const key of likelyMessageKeys) {
+          const candidate = parsedValue[key];
+          if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+          }
+        }
+
+        for (const nested of Object.values(parsedValue)) {
+          const match = findMessage(nested, depth + 1);
+          if (match) return match;
+        }
+
+        return '';
+      }
+
+      return findMessage(data);
     }
 
     function toObjectRows(rows) {
@@ -500,15 +566,40 @@
       try {
         saveConfig();
         let data;
+        let rows = [];
         try {
           data = await callApi('list', {}, 'GET');
+          rows = extractRowsFromResponse(data);
+
+          if (!rows.length) {
+            console.warn('GET list returned zero rows, retrying with POST list.', data);
+            const postData = await callApi('list', {});
+            const postRows = extractRowsFromResponse(postData);
+            if (postRows.length) {
+              data = postData;
+              rows = postRows;
+            } else {
+              data = postData;
+            }
+          }
         } catch (err) {
           console.warn('GET list failed, retrying with POST list.', err);
           data = await callApi('list', {});
+          rows = extractRowsFromResponse(data);
         }
-        const rows = extractRowsFromResponse(data);
         state.rows = normalizeRows(rows);
         renderDashboard();
+
+        if (!state.rows.length) {
+          const cfg = state.config || getConfigFromInputs();
+          const backendMessage = extractBackendMessage(data);
+          toast(
+            backendMessage || `No students were returned. Confirm the "${cfg.sheetName}" tab exists, the Apps Script can access the sheet, and the configured column headers exactly match the sheet.`,
+            false
+          );
+          return;
+        }
+
         toast(`Loaded ${state.rows.length} students.`);
       } catch (err) {
         toast(toFriendlyError(err).message, false);

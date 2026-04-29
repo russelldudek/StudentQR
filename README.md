@@ -2,6 +2,13 @@
 
 This repository contains a starter scaffold for a prom check-in system.
 
+## GitHub Pages + Google Sheets
+
+The static frontend in [index.html](./index.html) expects a Google Apps Script Web App as its sheet middleware.
+
+- Apps Script backend: [apps-script/Code.gs](./apps-script/Code.gs)
+- Setup guide: [apps-script/README.md](./apps-script/README.md)
+
 ## Goals
 - Scan or enter student identifiers at the door.
 - Validate eligibility and ticket/check-in status.
