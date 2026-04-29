@@ -213,9 +213,10 @@
       <div class="row" style="margin-top: 12px;">
         <button id="saveConfig">Save setup</button>
         <button id="loadData" class="btn-secondary">Load roster from sheet</button>
+        <button id="assignQrIds" class="btn-secondary">Assign missing QR IDs</button>
         <button id="resetConfig" class="btn-danger">Reset saved setup</button>
       </div>
-      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record.</p>
+      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record.</p>
     </section>
 
     <section id="dashboard" class="card hidden">
@@ -606,6 +607,22 @@
       }
     }
 
+    async function assignMissingQrIds() {
+      try {
+        saveConfig();
+        const data = await callApi('assignQrIds', {});
+        const assignedCount = Number(data?.assignedCount || 0);
+        const skippedCount = Number(data?.skippedCount || 0);
+        const message = extractBackendMessage(data)
+          || `Assigned ${assignedCount} QR IDs. Skipped ${skippedCount} existing values.`;
+
+        await loadRoster();
+        toast(message);
+      } catch (err) {
+        toast(toFriendlyError(err).message, false);
+      }
+    }
+
     function renderDashboard() {
       const body = ids('tableBody');
       const search = ids('searchInput')?.value?.trim()?.toLowerCase() || '';
@@ -729,6 +746,7 @@
       });
       ids('saveConfig').addEventListener('click', saveConfig);
       ids('loadData').addEventListener('click', loadRoster);
+      ids('assignQrIds').addEventListener('click', assignMissingQrIds);
       ids('refreshBtn').addEventListener('click', loadRoster);
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);

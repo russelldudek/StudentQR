@@ -27,9 +27,11 @@ Your `Students` tab should have a first row with these exact column names:
 
 - `GET ?action=list` returns `{ rows: [...] }`
 - `POST { action: "list", config }` also returns `{ rows: [...] }`
+- `POST { action: "assignQrIds", config }` fills blank `QR_ID` cells without overwriting existing ones
 - `POST { action: "admit", qrValue, config }` updates `Status` and `Admitted At`
 
 ## Notes
 
 - The frontend sends the full sheet configuration with both `GET` and `POST`.
+- New QR IDs are generated with an event-based prefix plus a random suffix, and existing `QR_ID` values are left untouched.
 - If the roster still fails to load, redeploy the script after changes and make sure the copied URL ends in `/exec`, not `/dev`.

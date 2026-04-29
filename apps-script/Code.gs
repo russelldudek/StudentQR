@@ -7,6 +7,7 @@
  * Supported requests:
  * - GET  ?action=list&...configFields
  * - POST { action: "list",  config }
+ * - POST { action: "assignQrIds", config }
  * - POST { action: "admit", qrValue, config }
  */
 
@@ -38,6 +39,10 @@ function handleRequest_(e, method) {
 
     if (action === 'list') {
       return jsonResponse_(listRows_(config));
+    }
+
+    if (action === 'assignqrids') {
+      return jsonResponse_(assignQrIds_(config));
     }
 
     if (action === 'admit') {
@@ -190,6 +195,52 @@ function admitRow_(config, qrValue) {
   };
 }
 
+function assignQrIds_(config) {
+  var context = getSheetContext_(config);
+  var values = context.sheet.getDataRange().getDisplayValues();
+
+  if (values.length < 2) {
+    return {
+      rows: [],
+      assignedCount: 0,
+      skippedCount: 0,
+      message: 'No student rows found to assign QR IDs.',
+    };
+  }
+
+  var assignedCount = 0;
+  var skippedCount = 0;
+  var qrColumnIndex = context.headerMap[config.qrCol];
+  var existingQrIds = {};
+
+  for (var i = 1; i < values.length; i += 1) {
+    var currentQr = String(values[i][qrColumnIndex - 1] || '').trim();
+    if (!currentQr) continue;
+    existingQrIds[normalizeKey_(currentQr)] = true;
+  }
+
+  for (var rowIndex = 1; rowIndex < values.length; rowIndex += 1) {
+    var qrCellValue = String(values[rowIndex][qrColumnIndex - 1] || '').trim();
+    if (qrCellValue) {
+      skippedCount += 1;
+      continue;
+    }
+
+    var generatedQrId = generateUniqueQrId_(config, existingQrIds);
+    context.sheet.getRange(rowIndex + 1, qrColumnIndex).setValue(generatedQrId);
+    values[rowIndex][qrColumnIndex - 1] = generatedQrId;
+    existingQrIds[normalizeKey_(generatedQrId)] = true;
+    assignedCount += 1;
+  }
+
+  return {
+    rows: objectRowsFromValues_(values),
+    assignedCount: assignedCount,
+    skippedCount: skippedCount,
+    message: 'Assigned ' + assignedCount + ' QR IDs. Skipped ' + skippedCount + ' existing values.',
+  };
+}
+
 function getSheetContext_(config) {
   var spreadsheet = SpreadsheetApp.openByUrl(config.sheetUrl);
   var sheet = spreadsheet.getSheetByName(config.sheetName);
@@ -288,6 +339,26 @@ function normalizeAllowedStatuses_(value) {
       return item.trim();
     })
     .filter(Boolean);
+}
+
+function generateUniqueQrId_(config, existingQrIds) {
+  var prefix = buildQrPrefix_(config);
+
+  while (true) {
+    var candidate = prefix + '-' + Utilities.getUuid().replace(/-/g, '').slice(0, 10).toUpperCase();
+    if (!existingQrIds[normalizeKey_(candidate)]) {
+      return candidate;
+    }
+  }
+}
+
+function buildQrPrefix_(config) {
+  var source = String(config.eventName || config.sheetName || 'student').trim().toUpperCase();
+  var cleaned = source.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!cleaned) {
+    return 'STUDENT';
+  }
+  return cleaned.slice(0, 24);
 }
 
 function normalizeKey_(value) {
