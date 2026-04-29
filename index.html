@@ -1221,6 +1221,10 @@
       ids('manualQr').value = String(value || '').trim();
     }
 
+    function isLegacyBlankStatusAdmitError(message) {
+      return /^student cannot be admitted from status\s+""\.?$/i.test(String(message || '').trim());
+    }
+
     function setScreenAlert(level, options = {}) {
       document.body.classList.remove('screen-alert-success', 'screen-alert-warning', 'screen-alert-error');
       if (state.screenAlertTimeoutId) {
@@ -1337,6 +1341,7 @@
 
         const alreadyAdmitted = String(res?.message || '').toLowerCase().includes('already marked as admitted');
         const blocked = Boolean(res?.error);
+        const legacyBlankStatusError = isLegacyBlankStatusAdmitError(res?.error);
 
         if (blocked) {
           setScreenAlert('error');
@@ -1344,7 +1349,9 @@
             stateClass: 'scan-state-blocked',
             kicker: 'Cannot Admit',
             name: displayName || 'Admission blocked',
-            detail: res.error,
+            detail: legacyBlankStatusError
+              ? 'This Apps Script deployment is still using the older admit rules. Re-deploy the latest Code.gs so blank status rows can be admitted.'
+              : res.error,
             status: statusValue,
             qrValue: qrDisplayValue,
             admittedAt: admittedAtValue,
@@ -1386,7 +1393,12 @@
 
         await loadRoster({ silent: true });
         if (blocked) {
-          return toast(res.error, false);
+          return toast(
+            legacyBlankStatusError
+              ? 'Your Apps Script Web App is still on the older deployment. Re-deploy the latest Code.gs so blank status rows can be admitted.'
+              : res.error,
+            false
+          );
         }
         if (bringingGuest) {
           toast(`Guest check needed for ${displayName || qrValue}.`, false);
