@@ -1387,7 +1387,9 @@
             stateClass: 'scan-state-success',
             kicker: 'Checked In',
             name: displayName || 'Student admitted',
-            detail: renderScanStatusMessage(row, cfg, false),
+            detail: bringingGuest
+              ? 'Guest flag is on. Confirm the guest is also on the admittance list.'
+              : 'Student admitted successfully.',
             status: statusValue,
             qrValue: qrDisplayValue,
             admittedAt: admittedAtValue,
