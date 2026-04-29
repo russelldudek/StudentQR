@@ -320,6 +320,7 @@
     const PROFILES_STORAGE_KEY = 'studentQrProfiles';
     const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
     const AUTO_REFRESH_MS = 8000;
+    const APP_SHARE_VERSION = '2026-04-29-1';
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
@@ -423,6 +424,7 @@
       const url = new URL(window.location.href);
       url.searchParams.set('setup', encodeConfigForUrl(cfg));
       url.searchParams.set('tab', 'scanner');
+      url.searchParams.set('v', APP_SHARE_VERSION);
       url.hash = '';
       return url.toString();
     }
