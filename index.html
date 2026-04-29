@@ -147,10 +147,6 @@
 
     <section id="setup" class="card">
       <h2>1) Setup Google Sheet + Workflow</h2>
-      <div class="row" style="margin-bottom: 12px;">
-        <div class="muted" id="setupLockStatus">Setup is locked.</div>
-        <button id="lockSetup" class="btn-secondary">Lock setup</button>
-      </div>
       <p class="muted">
         GitHub Pages is static, so writing to Google Sheets requires a middleware endpoint (typically a Google Apps Script Web App URL).
         Add it below so this app can read/update attendee rows.
@@ -318,8 +314,6 @@
     const CONFIG_STORAGE_KEY = 'studentQrConfig';
     const PROFILES_STORAGE_KEY = 'studentQrProfiles';
     const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
-    const SETUP_UNLOCK_KEY = 'studentQrSetupUnlocked';
-    const SETUP_PASSWORD = 'evie3843';
     const AUTO_REFRESH_MS = 8000;
 
     const fields = [
@@ -495,40 +489,6 @@
         return ['setup', 'dashboard', 'scanner'].includes(tab) ? tab : 'scanner';
       } catch {
         return 'scanner';
-      }
-    }
-
-    function isSetupUnlocked() {
-      return sessionStorage.getItem(SETUP_UNLOCK_KEY) === 'true';
-    }
-
-    function updateSetupLockUi() {
-      ids('setupLockStatus').textContent = isSetupUnlocked()
-        ? 'Setup is unlocked for this device session.'
-        : 'Setup is locked.';
-      ids('lockSetup').disabled = !isSetupUnlocked();
-    }
-
-    function unlockSetup() {
-      const entered = window.prompt('Enter the setup password');
-      if (entered == null) return false;
-      if (entered !== SETUP_PASSWORD) {
-        toast('Incorrect setup password.', false);
-        return false;
-      }
-
-      sessionStorage.setItem(SETUP_UNLOCK_KEY, 'true');
-      updateSetupLockUi();
-      toast('Setup unlocked.');
-      return true;
-    }
-
-    function lockSetup() {
-      sessionStorage.removeItem(SETUP_UNLOCK_KEY);
-      updateSetupLockUi();
-      toast('Setup locked.');
-      if (!ids('setup').classList.contains('hidden')) {
-        setTab('scanner');
       }
     }
 
@@ -920,6 +880,10 @@
         const cfg = saveConfig({ silent: true });
         if (!cfg) return;
         const data = await callApi('assignQrIds', {});
+        if (String(data?.error || '').toLowerCase().includes('unsupported action: assignqrids')) {
+          toast('Your Apps Script Web App is still running an older deployment. Re-paste the latest Code.gs and deploy a new /exec version, then try Assign missing QR IDs again.', false);
+          return;
+        }
         const assignedCount = Number(data?.assignedCount || 0);
         const skippedCount = Number(data?.skippedCount || 0);
         const message = extractBackendMessage(data)
@@ -1137,16 +1101,6 @@
         return;
       }
 
-      if (tab === 'setup' && !options.bypassLock && !isSetupUnlocked()) {
-        const unlocked = unlockSetup();
-        if (!unlocked) {
-          if (options.fallbackTab) {
-            setTab(options.fallbackTab, { bypassLock: true });
-          }
-          return;
-        }
-      }
-
       document.querySelectorAll('.tab').forEach((b) => {
         b.classList.toggle('active', b.dataset.tab === tab);
       });
@@ -1169,7 +1123,6 @@
       ids('loadProfile').addEventListener('click', loadSelectedProfile);
       ids('copyShareLink').addEventListener('click', copyShareLink);
       ids('setupProfileSelect').addEventListener('change', loadSelectedProfile);
-      ids('lockSetup').addEventListener('click', lockSetup);
       ids('refreshBtn').addEventListener('click', loadRoster);
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);
@@ -1198,7 +1151,6 @@
     loadSavedConfig();
     bindEvents();
     startAutoRefresh();
-    updateSetupLockUi();
     updateEventTitles();
     updateSharedModeUi();
     updateScannerGuestFlag(false, '');
