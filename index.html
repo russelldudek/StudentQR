@@ -385,6 +385,19 @@
       ids('manualSubmit').textContent = enabled ? 'Test scan only' : 'Scan / admit';
     }
 
+    function syncEffectiveTestMode(enabled) {
+      const normalized = Boolean(enabled);
+      if (state.config) {
+        state.config.testMode = normalized;
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state.config));
+        rememberProfile(state.config);
+      }
+      if (ids('testMode')) {
+        ids('testMode').checked = normalized;
+      }
+      updateTestModeUi(state.config || getConfigFromInputs());
+    }
+
     function getProfiles() {
       const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
       if (!raw) return {};
@@ -566,6 +579,28 @@
       }
 
       return cfg;
+    }
+
+    async function setGlobalTestMode(enabled, options = {}) {
+      const cfg = state.config || getConfigFromInputs();
+      if (!cfg?.apiUrl || !cfg?.sheetUrl || !cfg?.sheetName) {
+        syncEffectiveTestMode(enabled);
+        return;
+      }
+
+      try {
+        const data = await callApi('setTestMode', { testMode: enabled });
+        const effective = Boolean(data?.testMode);
+        syncEffectiveTestMode(effective);
+        if (!options.silent) {
+          toast(data?.message || `Test mode ${effective ? 'enabled' : 'disabled'} globally.`);
+        }
+      } catch (err) {
+        syncEffectiveTestMode(enabled);
+        if (!options.silent) {
+          toast(toFriendlyError(err).message, false);
+        }
+      }
     }
 
     function loadSavedConfig() {
@@ -907,6 +942,9 @@
           data = await callApi('list', {});
           rows = extractRowsFromResponse(data);
         }
+        if (data && Object.prototype.hasOwnProperty.call(data, 'testMode')) {
+          syncEffectiveTestMode(data.testMode);
+        }
         state.rows = normalizeRows(rows);
         renderDashboard();
 
@@ -937,6 +975,9 @@
         const cfg = saveConfig({ silent: true });
         if (!cfg) return;
         const data = await callApi('assignQrIds', {});
+        if (data && Object.prototype.hasOwnProperty.call(data, 'testMode')) {
+          syncEffectiveTestMode(data.testMode);
+        }
         if (String(data?.error || '').toLowerCase().includes('unsupported action: assignqrids')) {
           toast('Your Apps Script Web App is still running an older deployment. Re-paste the latest Code.gs and deploy a new /exec version, then try Assign missing QR IDs again.', false);
           return;
@@ -1045,7 +1086,10 @@
         const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
         const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
-        const isTestMode = Boolean(cfg?.testMode || res?.testMode);
+        if (Object.prototype.hasOwnProperty.call(res || {}, 'testMode')) {
+          syncEffectiveTestMode(res.testMode);
+        }
+        const isTestMode = Boolean((Object.prototype.hasOwnProperty.call(res || {}, 'testMode') ? res.testMode : cfg?.testMode));
         updateScannerGuestFlag(bringingGuest, guestValue || 'No');
         ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
           <div class="muted">${renderScanStatusMessage(row, cfg, isTestMode)}</div>
@@ -1191,6 +1235,7 @@
       ids('loadProfile').addEventListener('click', loadSelectedProfile);
       ids('copyShareLink').addEventListener('click', copyShareLink);
       ids('setupProfileSelect').addEventListener('change', loadSelectedProfile);
+      ids('testMode').addEventListener('change', () => setGlobalTestMode(ids('testMode').checked));
       ids('refreshBtn').addEventListener('click', loadRoster);
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);

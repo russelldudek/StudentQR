@@ -9,6 +9,7 @@
  * - POST { action: "list",  config }
  * - POST { action: "assignQrIds", config }
  * - POST { action: "admit", qrValue, config }
+ * - POST { action: "setTestMode", testMode, config }
  */
 
 function doGet(e) {
@@ -43,6 +44,10 @@ function handleRequest_(e, method) {
 
     if (action === 'assignqrids') {
       return jsonResponse_(assignQrIds_(config));
+    }
+
+    if (action === 'settestmode') {
+      return jsonResponse_(setTestMode_(config, request.testMode));
     }
 
     if (action === 'admit') {
@@ -103,7 +108,7 @@ function buildConfig_(request) {
   merged.admittedAtCol = merged.admittedAtCol || 'Admitted At';
   merged.admittedValue = merged.admittedValue || 'Admitted';
   merged.timeZone = merged.timeZone || Session.getScriptTimeZone() || 'America/New_York';
-  merged.testMode = normalizeBoolean_(merged.testMode);
+  merged.testMode = getGlobalTestMode_(merged, normalizeBoolean_(merged.testMode));
 
   return merged;
 }
@@ -132,6 +137,7 @@ function listRows_(config) {
     rows: rows,
     count: rows.length,
     sheetName: config.sheetName,
+    testMode: config.testMode,
   };
 }
 
@@ -201,6 +207,7 @@ function admitRow_(config, qrValue) {
   return {
     row: updatedRow,
     message: 'Student admitted successfully.',
+    testMode: false,
   };
 }
 
@@ -247,6 +254,17 @@ function assignQrIds_(config) {
     assignedCount: assignedCount,
     skippedCount: skippedCount,
     message: 'Assigned ' + assignedCount + ' QR IDs. Skipped ' + skippedCount + ' existing values.',
+    testMode: config.testMode,
+  };
+}
+
+function setTestMode_(config, value) {
+  var enabled = normalizeBoolean_(value);
+  PropertiesService.getScriptProperties().setProperty(getTestModePropertyKey_(config), enabled ? 'true' : 'false');
+  return {
+    ok: true,
+    testMode: enabled,
+    message: 'Test mode ' + (enabled ? 'enabled' : 'disabled') + ' globally.',
   };
 }
 
@@ -354,6 +372,26 @@ function normalizeBoolean_(value) {
   if (typeof value === 'boolean') return value;
   var normalized = String(value || '').toLowerCase().trim();
   return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
+function getGlobalTestMode_(config, fallbackValue) {
+  var stored = PropertiesService.getScriptProperties().getProperty(getTestModePropertyKey_(config));
+  if (stored == null || stored === '') {
+    return fallbackValue;
+  }
+  return normalizeBoolean_(stored);
+}
+
+function getTestModePropertyKey_(config) {
+  return 'testMode:' + extractSpreadsheetId_(config.sheetUrl) + ':' + String(config.sheetName || '');
+}
+
+function extractSpreadsheetId_(sheetUrl) {
+  var match = String(sheetUrl || '').match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match) {
+    return String(sheetUrl || '');
+  }
+  return match[1];
 }
 
 function generateUniqueQrId_(config, existingQrIds) {
