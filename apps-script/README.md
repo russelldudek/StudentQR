@@ -12,6 +12,10 @@ Your `Students` tab should have a first row with these exact column names:
 - `Status`
 - `Admitted At`
 
+Optional but supported:
+
+- `Bringing Guest`
+
 ## Deploy
 
 1. Open [script.new](https://script.new/) while signed into the Google account that can edit the sheet.

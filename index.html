@@ -96,6 +96,7 @@
     .status-admitted { background: rgba(16,185,129,.2); color: #6ee7b7; }
     .status-registered { background: rgba(56,189,248,.18); color: #93c5fd; }
     .status-missing { background: rgba(239,68,68,.18); color: #fca5a5; }
+    .status-guest { background: rgba(245, 158, 11, .18); color: #fcd34d; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -179,6 +180,10 @@
           <label for="qrCol">QR code value column header</label>
           <input id="qrCol" placeholder="QR_ID" value="QR_ID" />
         </div>
+        <div>
+          <label for="guestCol">Guest indicator column header</label>
+          <input id="guestCol" placeholder="Bringing Guest" value="Bringing Guest" />
+        </div>
       </div>
 
       <h3>3) Additional setup questions</h3>
@@ -233,6 +238,7 @@
               <th>Name</th>
               <th>QR</th>
               <th>Status</th>
+              <th>Guest</th>
               <th>Admitted At</th>
             </tr>
           </thead>
@@ -279,7 +285,7 @@
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
-      'admittedAtCol', 'eventName', 'allowedStatuses', 'admittedValue', 'timeZone'
+      'guestCol', 'admittedAtCol', 'eventName', 'allowedStatuses', 'admittedValue', 'timeZone'
     ];
 
     function toast(msg, ok = true) {
@@ -551,6 +557,7 @@
       return objectRows.map((r) => {
         const first = readRowValue(r, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']);
         const last = readRowValue(r, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']);
+        const guestValue = readRowValue(r, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         return {
           raw: r,
           name: `${first} ${last}`.trim(),
@@ -558,9 +565,16 @@
           last,
           qr: readRowValue(r, cfg.qrCol, ['QR_ID', 'QR', 'qr']),
           status: readRowValue(r, cfg.statusCol, ['Status']) || 'Missing',
+          guestValue,
+          bringingGuest: isGuestFlagEnabled(guestValue),
           admittedAt: readRowValue(r, cfg.admittedAtCol, ['Admitted At', 'admitted_at']),
         };
       });
+    }
+
+    function isGuestFlagEnabled(value) {
+      const normalized = normalizeKey(value);
+      return ['yes', 'y', 'true', '1'].includes(normalized);
     }
 
     async function loadRoster() {
@@ -627,7 +641,7 @@
       const body = ids('tableBody');
       const search = ids('searchInput')?.value?.trim()?.toLowerCase() || '';
       const filtered = state.rows.filter((r) =>
-        !search || `${r.name} ${r.qr} ${r.status}`.toLowerCase().includes(search)
+        !search || `${r.name} ${r.qr} ${r.status} ${r.guestValue}`.toLowerCase().includes(search)
       );
 
       body.innerHTML = filtered.map((r) => {
@@ -636,11 +650,15 @@
           : String(r.status).toLowerCase().includes('register')
             ? 'status-registered'
             : 'status-missing';
+        const guestBadge = r.bringingGuest
+          ? '<span class="status-pill status-guest">Guest</span>'
+          : '<span class="muted">No</span>';
         return `
           <tr>
             <td>${escapeHtml(r.name || '(No name)')}</td>
             <td>${escapeHtml(r.qr)}</td>
             <td><span class="status-pill ${statusClass}">${escapeHtml(String(r.status))}</span></td>
+            <td>${guestBadge}</td>
             <td>${escapeHtml(r.admittedAt)}</td>
           </tr>`;
       }).join('');
@@ -648,12 +666,14 @@
       const total = state.rows.length;
       const admitted = state.rows.filter(r => String(r.status).toLowerCase().includes('admit')).length;
       const registered = state.rows.filter(r => String(r.status).toLowerCase().includes('register')).length;
+      const guestCount = state.rows.filter(r => r.bringingGuest).length;
       const missing = total - admitted - registered;
 
       ids('stats').innerHTML = `
         <div class="stat"><div class="muted">Total</div><div class="value">${total}</div></div>
         <div class="stat"><div class="muted">Admitted</div><div class="value">${admitted}</div></div>
         <div class="stat"><div class="muted">Registered</div><div class="value">${registered}</div></div>
+        <div class="stat"><div class="muted">Bringing Guest</div><div class="value">${guestCount}</div></div>
         <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
       `;
     }
@@ -679,10 +699,16 @@
 
         const cfg = state.config;
         const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
+        const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
+        const bringingGuest = isGuestFlagEnabled(guestValue);
         ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
-          <div class="muted">Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.</div>`;
+          <div class="muted">Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.</div>
+          <div class="muted">${bringingGuest ? 'Guest flag: YES. Confirm the guest is also on the admittance list.' : `Guest flag: ${escapeHtml(guestValue || 'No')}`}</div>`;
 
         await loadRoster();
+        if (bringingGuest) {
+          toast(`Guest check needed for ${displayName || qrValue}.`, false);
+        }
         toast(`Admitted: ${displayName || qrValue}`);
       } catch (err) {
         toast(toFriendlyError(err).message, false);
