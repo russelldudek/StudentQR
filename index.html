@@ -140,7 +140,7 @@
     <p class="muted">Publish this file on GitHub Pages, complete setup once, then run check-in from any device.</p>
 
     <div class="tabs">
-      <button class="tab" data-tab="setup">Setup</button>
+      <button class="tab" data-tab="setup" id="setupTabButton">Setup</button>
       <button class="tab" data-tab="dashboard">Dashboard</button>
       <button class="tab active" data-tab="scanner">Scanner</button>
     </div>
@@ -251,6 +251,7 @@
 
     <section id="dashboard" class="card hidden">
       <h2>Dashboard</h2>
+      <p class="muted" id="dashboardEventTitle">No dance selected.</p>
       <div class="stats" id="stats"></div>
       <div class="row" style="margin:12px 0;">
         <input id="searchInput" placeholder="Search by name or QR value" />
@@ -274,6 +275,7 @@
 
     <section id="scanner" class="card hidden">
       <h2>Scanner</h2>
+      <p class="muted" id="scannerEventTitle">No dance selected.</p>
       <p class="muted">Scan the student's QR. If guest flag says yes, confirm the guest is on the list.</p>
       <div class="row">
         <div>
@@ -287,6 +289,7 @@
           <label for="manualQr">Manual QR value input (fallback)</label>
           <input id="manualQr" placeholder="Paste scanned value" />
           <button id="manualSubmit" style="margin-top: 8px;">Mark admitted</button>
+          <div id="scannerGuestFlag" class="hidden" style="margin-top: 12px;"></div>
           <h3 style="margin-top:16px;">Last scan result</h3>
           <div id="scanResult" class="stat">
             <div class="value">Waiting...</div>
@@ -448,6 +451,30 @@
 
       updateProfileSelect(options.activeProfileName || getActiveProfileName() || cfg.eventName || '');
       updateShareLinkOutput(cfg);
+      updateEventTitles(cfg);
+      updateSharedModeUi();
+    }
+
+    function updateEventTitles(cfg = state.config) {
+      const title = cfg?.eventName ? `Dance: ${cfg.eventName}` : 'No dance selected.';
+      ids('dashboardEventTitle').textContent = title;
+      ids('scannerEventTitle').textContent = title;
+    }
+
+    function isSharedLinkMode() {
+      try {
+        return Boolean(new URL(window.location.href).searchParams.get('setup'));
+      } catch {
+        return false;
+      }
+    }
+
+    function updateSharedModeUi() {
+      const sharedMode = isSharedLinkMode();
+      ids('setupTabButton').classList.toggle('hidden', sharedMode);
+      if (sharedMode && !ids('setup').classList.contains('hidden')) {
+        setTab('scanner', { bypassLock: true });
+      }
     }
 
     function getSharedConfigFromUrl() {
@@ -946,6 +973,24 @@
       `;
     }
 
+    function updateScannerGuestFlag(bringingGuest, guestValue = '') {
+      const target = ids('scannerGuestFlag');
+      if (bringingGuest) {
+        target.classList.remove('hidden');
+        target.innerHTML = '<span class="status-pill status-guest">Guest flag: YES</span><div class="muted" style="margin-top: 6px;">Confirm the guest is also on the admittance list.</div>';
+        return;
+      }
+
+      if (guestValue) {
+        target.classList.remove('hidden');
+        target.innerHTML = `<span class="muted">Guest flag: ${escapeHtml(guestValue)}</span>`;
+        return;
+      }
+
+      target.classList.add('hidden');
+      target.innerHTML = '';
+    }
+
     function escapeHtml(s) {
       return String(s)
         .replaceAll('&', '&amp;')
@@ -969,6 +1014,7 @@
         const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
         const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
+        updateScannerGuestFlag(bringingGuest, guestValue || 'No');
         ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
           <div class="muted">Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.</div>
           <div class="muted">${bringingGuest ? 'Guest flag: YES. Confirm the guest is also on the admittance list.' : `Guest flag: ${escapeHtml(guestValue || 'No')}`}</div>`;
@@ -1086,6 +1132,11 @@
     }
 
     function setTab(tab, options = {}) {
+      if (tab === 'setup' && isSharedLinkMode()) {
+        setTab('scanner', { bypassLock: true });
+        return;
+      }
+
       if (tab === 'setup' && !options.bypassLock && !isSetupUnlocked()) {
         const unlocked = unlockSetup();
         if (!unlocked) {
@@ -1148,6 +1199,9 @@
     bindEvents();
     startAutoRefresh();
     updateSetupLockUi();
+    updateEventTitles();
+    updateSharedModeUi();
+    updateScannerGuestFlag(false, '');
     renderDashboard();
     setTab(getInitialTabFromUrl(), { fallbackTab: 'scanner' });
 
