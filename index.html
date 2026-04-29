@@ -313,7 +313,7 @@
       </div>
       <div class="grid">
         <div>
-          <label for="allowedStatuses">Allowed pre-admit statuses (comma separated)</label>
+          <label for="allowedStatuses">Allowed pre-admit statuses (legacy, not enforced)</label>
           <input id="allowedStatuses" value="Registered" />
         </div>
         <div>
@@ -356,7 +356,7 @@
         </div>
       </div>
       <p class="muted">Save by dance name, then copy the check-in link from the published site so other staff can open the same scanner setup on their phones.</p>
-      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record unless test mode is enabled.</p>
+      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> matches the <code>QR_ID</code>, writes <code>Admitted</code>, and blocks only if that student is already admitted unless test mode is enabled.</p>
     </section>
 
     <section id="dashboard" class="card hidden">
@@ -836,8 +836,8 @@
       url.searchParams.set('_ts', String(Date.now()));
     }
 
-    async function callApi(action, payload = {}, method = 'POST') {
-      const cfg = state.config || getConfigFromInputs();
+    async function callApi(action, payload = {}, method = 'POST', configOverride = null) {
+      const cfg = configOverride || state.config || getConfigFromInputs();
       if (!cfg?.apiUrl) throw new Error('Missing Apps Script URL in setup.');
 
       if (method === 'GET') {
@@ -1291,7 +1291,11 @@
       if (!qrValue) return toast('Missing QR value.', false);
       setScreenAlert('idle');
       try {
-        const res = await callApi('admit', { qrValue });
+        const admitConfig = {
+          ...(state.config || getConfigFromInputs()),
+          allowedStatuses: [],
+        };
+        const res = await callApi('admit', { qrValue }, 'POST', admitConfig);
         const row = res.row || null;
         if (!row) {
           const probableNameMatch = findProbableNameMatch(qrValue);

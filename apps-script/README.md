@@ -32,7 +32,7 @@ Optional but supported:
 - `GET ?action=list` returns `{ rows: [...] }`
 - `POST { action: "list", config }` also returns `{ rows: [...] }`
 - `POST { action: "assignQrIds", config }` fills blank `QR_ID` cells without overwriting existing ones
-- `POST { action: "admit", qrValue, config }` updates `Status` and `Admitted At`
+- `POST { action: "admit", qrValue, config }` matches the `QR_ID`, writes `Status=Admitted` and `Admitted At`, and blocks repeat scans when the row is already admitted
 - `POST { action: "setTestMode", testMode, config }` changes test mode globally for that dance roster
 - If `testMode` is enabled in config, admit validates the code without writing attendance changes
 
