@@ -321,6 +321,22 @@
     const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
     const AUTO_REFRESH_MS = 8000;
     const APP_SHARE_VERSION = '2026-04-29-1';
+    const SHARE_CONFIG_FIELDS = [
+      'sheetUrl',
+      'apiUrl',
+      'sheetName',
+      'firstNameCol',
+      'lastNameCol',
+      'qrCol',
+      'statusCol',
+      'guestCol',
+      'admittedAtCol',
+      'eventName',
+      'allowedStatuses',
+      'admittedValue',
+      'timeZone',
+      'testMode',
+    ];
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
@@ -405,7 +421,12 @@
     }
 
     function encodeConfigForUrl(cfg) {
-      return btoa(unescape(encodeURIComponent(JSON.stringify(cfg))))
+      const compactConfig = SHARE_CONFIG_FIELDS.map((field) => {
+        if (field === 'testMode') return cfg[field] ? 1 : 0;
+        return cfg[field];
+      });
+
+      return btoa(unescape(encodeURIComponent(JSON.stringify(compactConfig))))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/g, '');
@@ -416,7 +437,17 @@
         .replace(/-/g, '+')
         .replace(/_/g, '/');
       const padded = normalized + '==='.slice((normalized.length + 3) % 4);
-      return JSON.parse(decodeURIComponent(escape(atob(padded))));
+      const parsed = JSON.parse(decodeURIComponent(escape(atob(padded))));
+
+      if (Array.isArray(parsed)) {
+        const cfg = {};
+        SHARE_CONFIG_FIELDS.forEach((field, index) => {
+          cfg[field] = field === 'testMode' ? Boolean(parsed[index]) : parsed[index];
+        });
+        return cfg;
+      }
+
+      return parsed;
     }
 
     function buildShareUrl(cfg) {
