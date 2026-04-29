@@ -109,7 +109,6 @@
       font-weight: 700;
     }
     .status-admitted { background: rgba(16,185,129,.2); color: #6ee7b7; }
-    .status-registered { background: rgba(56,189,248,.18); color: #93c5fd; }
     .status-missing { background: rgba(239,68,68,.18); color: #fca5a5; }
     .status-guest { background: rgba(245, 158, 11, .18); color: #fcd34d; }
     .scan-feedback {
@@ -313,10 +312,6 @@
       </div>
       <div class="grid">
         <div>
-          <label for="allowedStatuses">Allowed pre-admit statuses (legacy, not enforced)</label>
-          <input id="allowedStatuses" value="Registered" />
-        </div>
-        <div>
           <label for="admittedValue">Value to write when admitted</label>
           <input id="admittedValue" value="Admitted" />
         </div>
@@ -455,7 +450,6 @@
       'guestCol',
       'admittedAtCol',
       'eventName',
-      'allowedStatuses',
       'admittedValue',
       'timeZone',
       'testMode',
@@ -463,7 +457,7 @@
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
-      'guestCol', 'admittedAtCol', 'eventName', 'allowedStatuses', 'admittedValue', 'timeZone', 'testMode'
+      'guestCol', 'admittedAtCol', 'eventName', 'admittedValue', 'timeZone', 'testMode'
     ];
 
     function toast(msg, ok = true) {
@@ -479,9 +473,10 @@
       const cfg = {};
       for (const f of fields) {
         const el = ids(f);
+        if (!el) continue;
         cfg[f] = el.type === 'checkbox' ? el.checked : el.value.trim();
       }
-      cfg.allowedStatuses = cfg.allowedStatuses.split(',').map(s => s.trim()).filter(Boolean);
+      cfg.allowedStatuses = [];
       return cfg;
     }
 
@@ -490,6 +485,7 @@
       for (const f of fields) {
         if (!(f in cfg)) continue;
         const el = ids(f);
+        if (!el) continue;
         if (el.type === 'checkbox') {
           el.checked = Boolean(cfg[f]);
           continue;
@@ -1127,9 +1123,7 @@
       body.innerHTML = filtered.map((r) => {
         const statusClass = String(r.status).toLowerCase().includes('admit')
           ? 'status-admitted'
-          : String(r.status).toLowerCase().includes('register')
-            ? 'status-registered'
-            : 'status-missing';
+          : 'status-missing';
         const guestBadge = r.bringingGuest
           ? '<span class="status-pill status-guest">Guest</span>'
           : '<span class="muted">No</span>';
@@ -1145,14 +1139,12 @@
 
       const total = state.rows.length;
       const admitted = state.rows.filter(r => String(r.status).toLowerCase().includes('admit')).length;
-      const registered = state.rows.filter(r => String(r.status).toLowerCase().includes('register')).length;
       const guestCount = state.rows.filter(r => r.bringingGuest).length;
-      const missing = total - admitted - registered;
+      const missing = total - admitted;
 
       ids('stats').innerHTML = `
         <div class="stat"><div class="muted">Total</div><div class="value">${total}</div></div>
         <div class="stat"><div class="muted">Admitted</div><div class="value">${admitted}</div></div>
-        <div class="stat"><div class="muted">Registered</div><div class="value">${registered}</div></div>
         <div class="stat"><div class="muted">Bringing Guest</div><div class="value">${guestCount}</div></div>
         <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
       `;
