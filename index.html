@@ -396,6 +396,12 @@
             <button id="stopScan" class="btn-secondary">Stop scan</button>
             <button id="scanPhotoBtn" class="btn-secondary">Scan from photo</button>
           </div>
+          <div style="margin-top:10px;">
+            <label for="keepScannerOpen" style="display:flex; align-items:center; gap:10px; margin-bottom:0;">
+              <input id="keepScannerOpen" type="checkbox" style="width:auto;" />
+              <span>Keep camera open for continuous scanning</span>
+            </label>
+          </div>
           <input id="scanPhotoInput" type="file" accept="image/*" capture="environment" class="hidden" />
         </div>
         <div>
@@ -427,6 +433,9 @@
       scanContext: null,
       autoRefreshId: null,
       screenAlertTimeoutId: null,
+      isProcessingScan: false,
+      lastDetectedQrValue: '',
+      lastDetectedAt: 0,
     };
 
     const ids = (id) => document.getElementById(id);
@@ -1221,6 +1230,16 @@
       ids('manualQr').value = String(value || '').trim();
     }
 
+    function shouldKeepScannerOpen() {
+      return Boolean(ids('keepScannerOpen')?.checked);
+    }
+
+    function resetScanDeduping() {
+      state.isProcessingScan = false;
+      state.lastDetectedQrValue = '';
+      state.lastDetectedAt = 0;
+    }
+
     function isLegacyBlankStatusAdmitError(message) {
       return /^student cannot be admitted from status\s+""\.?$/i.test(String(message || '').trim());
     }
@@ -1417,6 +1436,7 @@
     async function startScanning() {
       if (state.scanning) return;
       setScreenAlert('idle');
+      resetScanDeduping();
       const video = ids('video');
 
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -1458,16 +1478,46 @@
 
       const loop = async () => {
         if (!state.scanning) return;
+        if (state.isProcessingScan) {
+          state.scanLoopId = requestAnimationFrame(loop);
+          return;
+        }
         try {
           const rawValue = await readQrFromVideo(video);
           if (rawValue) {
-            state.scanning = false;
-            stopScanning();
-            await admitByQr(rawValue.trim(), { source: 'camera' });
+            const normalizedValue = rawValue.trim();
+            const now = Date.now();
+            const isDuplicateRead = normalizedValue
+              && normalizedValue === state.lastDetectedQrValue
+              && (now - state.lastDetectedAt) < 3000;
+
+            if (isDuplicateRead) {
+              state.scanLoopId = requestAnimationFrame(loop);
+              return;
+            }
+
+            state.isProcessingScan = true;
+            state.lastDetectedQrValue = normalizedValue;
+            state.lastDetectedAt = now;
+
+            if (!shouldKeepScannerOpen()) {
+              state.scanning = false;
+              stopScanning();
+            }
+
+            await admitByQr(normalizedValue, { source: 'camera' });
+
+            if (shouldKeepScannerOpen() && state.stream) {
+              state.isProcessingScan = false;
+              state.scanLoopId = requestAnimationFrame(loop);
+            } else {
+              resetScanDeduping();
+            }
             return;
           }
         } catch (err) {
           console.warn(err);
+          state.isProcessingScan = false;
         }
         state.scanLoopId = requestAnimationFrame(loop);
       };
@@ -1476,6 +1526,7 @@
 
     function stopScanning() {
       state.scanning = false;
+      resetScanDeduping();
       if (state.scanLoopId) {
         cancelAnimationFrame(state.scanLoopId);
         state.scanLoopId = null;
@@ -1640,6 +1691,11 @@
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);
       ids('stopScan').addEventListener('click', stopScanning);
+      ids('keepScannerOpen').addEventListener('change', () => {
+        if (!shouldKeepScannerOpen()) {
+          resetScanDeduping();
+        }
+      });
       ids('scanPhotoBtn').addEventListener('click', () => ids('scanPhotoInput').click());
       ids('scanPhotoInput').addEventListener('change', async (event) => {
         const file = event.target.files?.[0];
