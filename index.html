@@ -297,6 +297,7 @@
     </section>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <script>
     const state = {
       config: null,
@@ -304,6 +305,10 @@
       stream: null,
       scanning: false,
       detector: null,
+      scanLoopId: null,
+      scanCanvas: null,
+      scanContext: null,
+      autoRefreshId: null,
     };
 
     const ids = (id) => document.getElementById(id);
@@ -312,6 +317,7 @@
     const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
     const SETUP_UNLOCK_KEY = 'studentQrSetupUnlocked';
     const SETUP_PASSWORD = 'evie3843';
+    const AUTO_REFRESH_MS = 8000;
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
@@ -831,7 +837,7 @@
       return ['yes', 'y', 'true', '1'].includes(normalized);
     }
 
-    async function loadRoster() {
+    async function loadRoster(options = {}) {
       try {
         const cfg = saveConfig({ silent: true });
         if (!cfg) return;
@@ -863,16 +869,22 @@
         if (!state.rows.length) {
           const cfg = state.config || getConfigFromInputs();
           const backendMessage = extractBackendMessage(data);
-          toast(
-            backendMessage || `No students were returned. Confirm the "${cfg.sheetName}" tab exists, the Apps Script can access the sheet, and the configured column headers exactly match the sheet.`,
-            false
-          );
+          if (!options.silent) {
+            toast(
+              backendMessage || `No students were returned. Confirm the "${cfg.sheetName}" tab exists, the Apps Script can access the sheet, and the configured column headers exactly match the sheet.`,
+              false
+            );
+          }
           return;
         }
 
-        toast(`Loaded ${state.rows.length} students.`);
+        if (!options.silent) {
+          toast(`Loaded ${state.rows.length} students.`);
+        }
       } catch (err) {
-        toast(toFriendlyError(err).message, false);
+        if (!options.silent) {
+          toast(toFriendlyError(err).message, false);
+        }
       }
     }
 
@@ -886,7 +898,7 @@
         const message = extractBackendMessage(data)
           || `Assigned ${assignedCount} QR IDs. Skipped ${skippedCount} existing values.`;
 
-        await loadRoster();
+        await loadRoster({ silent: true });
         toast(message);
       } catch (err) {
         toast(toFriendlyError(err).message, false);
@@ -961,7 +973,7 @@
           <div class="muted">Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.</div>
           <div class="muted">${bringingGuest ? 'Guest flag: YES. Confirm the guest is also on the admittance list.' : `Guest flag: ${escapeHtml(guestValue || 'No')}`}</div>`;
 
-        await loadRoster();
+        await loadRoster({ silent: true });
         if (bringingGuest) {
           toast(`Guest check needed for ${displayName || qrValue}.`, false);
         }
@@ -975,42 +987,102 @@
       if (state.scanning) return;
       const video = ids('video');
 
-      if (!('BarcodeDetector' in window)) {
-        toast('BarcodeDetector not supported in this browser. Use manual input or a Chromium browser.', false);
+      if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function') {
+        toast('Camera scanning is not supported on this device. Use manual QR entry.', false);
         return;
       }
 
-      state.detector = new BarcodeDetector({ formats: ['qr_code'] });
-      state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      state.detector = 'BarcodeDetector' in window
+        ? new BarcodeDetector({ formats: ['qr_code'] })
+        : null;
+      try {
+        state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      } catch (err) {
+        console.warn(err);
+        toast('Could not open the camera. Check camera permissions and use HTTPS on phones.', false);
+        return;
+      }
       video.srcObject = state.stream;
       state.scanning = true;
 
       const loop = async () => {
         if (!state.scanning) return;
         try {
-          const codes = await state.detector.detect(video);
-          if (codes.length > 0 && codes[0].rawValue) {
+          const rawValue = await readQrFromVideo(video);
+          if (rawValue) {
             state.scanning = false;
             stopScanning();
-            ids('manualQr').value = codes[0].rawValue;
-            await admitByQr(codes[0].rawValue.trim());
+            ids('manualQr').value = rawValue;
+            await admitByQr(rawValue.trim());
             return;
           }
         } catch (err) {
           console.warn(err);
         }
-        requestAnimationFrame(loop);
+        state.scanLoopId = requestAnimationFrame(loop);
       };
-      requestAnimationFrame(loop);
+      state.scanLoopId = requestAnimationFrame(loop);
     }
 
     function stopScanning() {
       state.scanning = false;
+      if (state.scanLoopId) {
+        cancelAnimationFrame(state.scanLoopId);
+        state.scanLoopId = null;
+      }
       if (state.stream) {
         for (const track of state.stream.getTracks()) track.stop();
         state.stream = null;
       }
       ids('video').srcObject = null;
+    }
+
+    function ensureScanCanvas() {
+      if (!state.scanCanvas) {
+        state.scanCanvas = document.createElement('canvas');
+        state.scanContext = state.scanCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      return state.scanCanvas;
+    }
+
+    async function readQrFromVideo(video) {
+      if (state.detector) {
+        const codes = await state.detector.detect(video);
+        return codes[0]?.rawValue || '';
+      }
+
+      if (typeof window.jsQR !== 'function') {
+        return '';
+      }
+
+      if (!video.videoWidth || !video.videoHeight) {
+        return '';
+      }
+
+      const canvas = ensureScanCanvas();
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      state.scanContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = state.scanContext.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(image.data, canvas.width, canvas.height, {
+        inversionAttempts: 'dontInvert',
+      });
+      return code?.data || '';
+    }
+
+    function startAutoRefresh() {
+      if (state.autoRefreshId) return;
+      state.autoRefreshId = setInterval(() => {
+        const activeScanner = !ids('scanner').classList.contains('hidden');
+        const activeDashboard = !ids('dashboard').classList.contains('hidden');
+        if (document.hidden || !state.config || (!activeScanner && !activeDashboard)) return;
+        loadRoster({ silent: true });
+      }, AUTO_REFRESH_MS);
+    }
+
+    function triggerRosterSync() {
+      if (!state.config) return;
+      loadRoster({ silent: true });
     }
 
     function setTab(tab, options = {}) {
@@ -1030,6 +1102,10 @@
       ['setup', 'dashboard', 'scanner'].forEach((id) => {
         ids(id).classList.toggle('hidden', id !== tab);
       });
+
+      if ((tab === 'dashboard' || tab === 'scanner') && state.config) {
+        triggerRosterSync();
+      }
     }
 
     function bindEvents() {
@@ -1062,10 +1138,15 @@
         updateShareLinkOutput(null);
         toast('Saved setup cleared.');
       });
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) triggerRosterSync();
+      });
+      window.addEventListener('focus', triggerRosterSync);
     }
 
     loadSavedConfig();
     bindEvents();
+    startAutoRefresh();
     updateSetupLockUi();
     renderDashboard();
     setTab(getInitialTabFromUrl(), { fallbackTab: 'scanner' });
