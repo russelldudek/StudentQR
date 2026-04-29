@@ -1184,6 +1184,29 @@
         </div>`;
     }
 
+    function getScanDisplayQrValue(row, cfg, scannedQrValue) {
+      const configuredKey = String(cfg?.qrCol || '').trim();
+      const directValue = configuredKey && row && typeof row === 'object'
+        ? String(row[configuredKey] || '').trim()
+        : '';
+      if (directValue) return directValue;
+
+      const normalizedScanValue = normalizeKey(scannedQrValue);
+      const normalizedRowNumber = String(row?._rowNumber || '').trim();
+      const rosterMatch = state.rows.find((entry) => {
+        if (!entry) return false;
+        if (normalizedScanValue && normalizeKey(entry.qr) === normalizedScanValue) return true;
+        if (normalizedRowNumber && String(entry.raw?._rowNumber || '').trim() === normalizedRowNumber) return true;
+        return false;
+      });
+      if (rosterMatch?.qr) return rosterMatch.qr;
+
+      const fallbackValue = readRowValue(row, cfg.qrCol, ['QR_ID', 'QR', 'qr']);
+      if (fallbackValue) return String(fallbackValue).trim();
+
+      return String(scannedQrValue || '').trim();
+    }
+
     function escapeHtml(s) {
       return String(s)
         .replaceAll('&', '&amp;')
@@ -1216,7 +1239,7 @@
         const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
         const statusValue = readRowValue(row, cfg.statusCol, ['Status']) || 'Missing';
         const admittedAtValue = readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '';
-        const qrDisplayValue = readRowValue(row, cfg.qrCol, ['QR_ID', 'QR', 'qr']) || qrValue;
+        const qrDisplayValue = getScanDisplayQrValue(row, cfg, qrValue);
         const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
         if (Object.prototype.hasOwnProperty.call(res || {}, 'testMode')) {
