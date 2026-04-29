@@ -494,6 +494,14 @@
       }
     }
 
+    function coerceConfigTestModeOff(cfg) {
+      if (!cfg || typeof cfg !== 'object') return cfg;
+      return {
+        ...cfg,
+        testMode: false,
+      };
+    }
+
     function updateTestModeUi(cfg = state.config || getConfigFromInputs()) {
       const enabled = Boolean(cfg?.testMode);
       const banner = ids('testModeBanner');
@@ -536,7 +544,7 @@
     function rememberProfile(cfg) {
       if (!cfg?.eventName) return;
       const profiles = getProfiles();
-      profiles[cfg.eventName] = cfg;
+      profiles[cfg.eventName] = coerceConfigTestModeOff(cfg);
       setProfiles(profiles);
     }
 
@@ -620,22 +628,23 @@
 
     function applyConfig(cfg, options = {}) {
       if (!cfg) return;
-      state.config = cfg;
-      fillInputsFromConfig(cfg);
+      const normalizedCfg = options.forceTestModeOff === false ? cfg : coerceConfigTestModeOff(cfg);
+      state.config = normalizedCfg;
+      fillInputsFromConfig(normalizedCfg);
 
       if (options.persistCurrent !== false) {
-        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cfg));
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(normalizedCfg));
       }
 
       if (options.activeProfileName !== undefined) {
         setActiveProfile(options.activeProfileName);
       }
 
-      updateProfileSelect(options.activeProfileName || getActiveProfileName() || cfg.eventName || '');
-      updateShareLinkOutput(cfg);
-      updateEventTitles(cfg);
+      updateProfileSelect(options.activeProfileName || getActiveProfileName() || normalizedCfg.eventName || '');
+      updateShareLinkOutput(normalizedCfg);
+      updateEventTitles(normalizedCfg);
       updateSharedModeUi();
-      updateTestModeUi(cfg);
+      updateTestModeUi(normalizedCfg);
     }
 
     function updateEventTitles(cfg = state.config) {
@@ -1305,6 +1314,7 @@
         const admitConfig = {
           ...(state.config || getConfigFromInputs()),
           allowedStatuses: [],
+          testMode: false,
         };
         const res = await callApi('admit', { qrValue }, 'POST', admitConfig);
         const row = res.row || null;
