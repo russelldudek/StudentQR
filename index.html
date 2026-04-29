@@ -394,7 +394,9 @@
           <div class="row" style="margin-top:8px;">
             <button id="startScan">Start camera scan</button>
             <button id="stopScan" class="btn-secondary">Stop scan</button>
+            <button id="scanPhotoBtn" class="btn-secondary">Scan from photo</button>
           </div>
+          <input id="scanPhotoInput" type="file" accept="image/*" capture="environment" class="hidden" />
         </div>
         <div>
           <label for="manualQr">Manual QR value input (fallback)</label>
@@ -1200,6 +1202,25 @@
         </div>`;
     }
 
+    function findProbableNameMatch(scannedValue) {
+      const normalized = normalizeKey(scannedValue);
+      if (!normalized) return null;
+
+      return state.rows.find((entry) => {
+        if (!entry) return false;
+        return [
+          entry.name,
+          entry.first,
+          entry.last,
+          `${entry.first || ''}${entry.last || ''}`,
+        ].some((candidate) => normalizeKey(candidate) === normalized);
+      }) || null;
+    }
+
+    function setManualQrValue(value) {
+      ids('manualQr').value = String(value || '').trim();
+    }
+
     function setScreenAlert(level, options = {}) {
       document.body.classList.remove('screen-alert-success', 'screen-alert-warning', 'screen-alert-error');
       if (state.screenAlertTimeoutId) {
@@ -1262,25 +1283,39 @@
         .replaceAll("'", '&#39;');
     }
 
-    async function admitByQr(qrValue) {
+    async function admitByQr(qrValue, options = {}) {
       if (!qrValue) return toast('Missing QR value.', false);
       setScreenAlert('idle');
       try {
         const res = await callApi('admit', { qrValue });
         const row = res.row || null;
         if (!row) {
+          const probableNameMatch = findProbableNameMatch(qrValue);
+          const isAutomaticSource = options.source === 'camera' || options.source === 'photo';
+          if (!isAutomaticSource) {
+            setManualQrValue(qrValue);
+          } else {
+            setManualQrValue('');
+          }
           updateScannerGuestFlag(false, '');
           setScreenAlert('error');
           renderScanResultCard({
             stateClass: 'scan-state-missing',
-            kicker: 'Not On List',
-            name: 'Student not found',
-            detail: 'This QR code does not match any student on the roster.',
+            kicker: probableNameMatch ? 'Wrong QR Content' : 'Not On List',
+            name: probableNameMatch ? probableNameMatch.name || 'Wrong QR value' : 'Student not found',
+            detail: probableNameMatch
+              ? `This QR appears to contain "${qrValue}" which matches a student name, not the QR_ID column value. Reprint or regenerate the QR using that student's QR_ID.`
+              : 'This QR code does not match any student on the roster.',
             status: 'No match',
             qrValue,
             admittedAt: '',
           });
-          return toast('Student not found for this QR value.', false);
+          return toast(
+            probableNameMatch
+              ? `Scanned value looks like a student name, not a QR_ID: ${qrValue}`
+              : 'Student not found for this QR value.',
+            false
+          );
         }
 
         const cfg = state.config;
@@ -1293,6 +1328,7 @@
         const qrDisplayValue = getScanDisplayQrValue(displayRow, cfg, qrValue, res?.matchedQrValue);
         const guestValue = canonicalScanRow?.guestValue || readRowValue(displayRow, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
+        setManualQrValue(qrDisplayValue);
         if (Object.prototype.hasOwnProperty.call(res || {}, 'testMode')) {
           syncEffectiveTestMode(res.testMode);
         }
@@ -1366,6 +1402,11 @@
       setScreenAlert('idle');
       const video = ids('video');
 
+      if (!navigator.mediaDevices?.getUserMedia) {
+        toast('Live camera scanning is not available on this device. Use Scan from photo or manual entry.', false);
+        return;
+      }
+
       if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function') {
         toast('Camera scanning is not supported on this device. Use manual QR entry.', false);
         return;
@@ -1375,13 +1416,27 @@
         ? new BarcodeDetector({ formats: ['qr_code'] })
         : null;
       try {
-        state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        state.stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          }
+        });
       } catch (err) {
         console.warn(err);
         toast('Could not open the camera. Check camera permissions and use HTTPS on phones.', false);
         return;
       }
       video.srcObject = state.stream;
+      video.setAttribute('playsinline', 'true');
+      video.muted = true;
+      try {
+        await video.play();
+      } catch (err) {
+        console.warn(err);
+      }
+      await waitForVideoReady(video);
       state.scanning = true;
 
       const loop = async () => {
@@ -1391,8 +1446,7 @@
           if (rawValue) {
             state.scanning = false;
             stopScanning();
-            ids('manualQr').value = rawValue;
-            await admitByQr(rawValue.trim());
+            await admitByQr(rawValue.trim(), { source: 'camera' });
             return;
           }
         } catch (err) {
@@ -1424,17 +1478,43 @@
       return state.scanCanvas;
     }
 
-    async function readQrFromVideo(video) {
-      if (state.detector) {
-        const codes = await state.detector.detect(video);
-        return codes[0]?.rawValue || '';
+    function waitForVideoReady(video) {
+      if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+        return Promise.resolve();
       }
 
-      if (typeof window.jsQR !== 'function') {
+      return new Promise((resolve) => {
+        let resolved = false;
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          video.removeEventListener('loadedmetadata', finish);
+          video.removeEventListener('playing', finish);
+          resolve();
+        };
+        video.addEventListener('loadedmetadata', finish, { once: true });
+        video.addEventListener('playing', finish, { once: true });
+        setTimeout(finish, 1200);
+      });
+    }
+
+    async function readQrFromVideo(video) {
+      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
         return '';
       }
 
-      if (!video.videoWidth || !video.videoHeight) {
+      if (state.detector) {
+        try {
+          const codes = await state.detector.detect(video);
+          if (codes[0]?.rawValue) {
+            return codes[0].rawValue;
+          }
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+
+      if (typeof window.jsQR !== 'function') {
         return '';
       }
 
@@ -1444,9 +1524,55 @@
       state.scanContext.drawImage(video, 0, 0, canvas.width, canvas.height);
       const image = state.scanContext.getImageData(0, 0, canvas.width, canvas.height);
       const code = window.jsQR(image.data, canvas.width, canvas.height, {
-        inversionAttempts: 'dontInvert',
+        inversionAttempts: 'attemptBoth',
       });
       return code?.data || '';
+    }
+
+    async function decodeQrFromImageFile(file) {
+      if (!file) return '';
+      if (typeof window.jsQR !== 'function') {
+        throw new Error('Photo QR scanning requires jsQR support.');
+      }
+
+      const imageUrl = URL.createObjectURL(file);
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const element = new Image();
+          element.onload = () => resolve(element);
+          element.onerror = () => reject(new Error('Could not read the selected image.'));
+          element.src = imageUrl;
+        });
+
+        const canvas = ensureScanCanvas();
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        state.scanContext.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const image = state.scanContext.getImageData(0, 0, canvas.width, canvas.height);
+        const code = window.jsQR(image.data, canvas.width, canvas.height, {
+          inversionAttempts: 'attemptBoth',
+        });
+        return code?.data || '';
+      } finally {
+        URL.revokeObjectURL(imageUrl);
+      }
+    }
+
+    async function scanFromPhotoFile(file) {
+      setScreenAlert('idle');
+      try {
+        const rawValue = await decodeQrFromImageFile(file);
+        if (!rawValue) {
+          setManualQrValue('');
+          setScreenAlert('error');
+          toast('No QR code was found in that photo.', false);
+          return;
+        }
+        await admitByQr(rawValue.trim(), { source: 'photo' });
+      } catch (err) {
+        console.warn(err);
+        toast(toFriendlyError(err).message, false);
+      }
     }
 
     function startAutoRefresh() {
@@ -1497,6 +1623,14 @@
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);
       ids('stopScan').addEventListener('click', stopScanning);
+      ids('scanPhotoBtn').addEventListener('click', () => ids('scanPhotoInput').click());
+      ids('scanPhotoInput').addEventListener('change', async (event) => {
+        const file = event.target.files?.[0];
+        if (file) {
+          await scanFromPhotoFile(file);
+        }
+        event.target.value = '';
+      });
       ids('manualSubmit').addEventListener('click', () => admitByQr(ids('manualQr').value.trim()));
       ids('resetConfig').addEventListener('click', () => {
         const cfg = state.config || getConfigFromInputs();
