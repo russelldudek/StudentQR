@@ -140,13 +140,17 @@
     <p class="muted">Publish this file on GitHub Pages, complete setup once, then run check-in from any device.</p>
 
     <div class="tabs">
-      <button class="tab active" data-tab="setup">Setup</button>
+      <button class="tab" data-tab="setup">Setup</button>
       <button class="tab" data-tab="dashboard">Dashboard</button>
-      <button class="tab" data-tab="scanner">Scanner</button>
+      <button class="tab active" data-tab="scanner">Scanner</button>
     </div>
 
     <section id="setup" class="card">
       <h2>1) Setup Google Sheet + Workflow</h2>
+      <div class="row" style="margin-bottom: 12px;">
+        <div class="muted" id="setupLockStatus">Setup is locked.</div>
+        <button id="lockSetup" class="btn-secondary">Lock setup</button>
+      </div>
       <p class="muted">
         GitHub Pages is static, so writing to Google Sheets requires a middleware endpoint (typically a Google Apps Script Web App URL).
         Add it below so this app can read/update attendee rows.
@@ -269,8 +273,8 @@
     </section>
 
     <section id="scanner" class="card hidden">
-      <h2>Scanner Workflow</h2>
-      <p class="muted">Scan QR code → look up student by QR value → write "Admitted" status and timestamp to sheet.</p>
+      <h2>Scanner</h2>
+      <p class="muted">Scan the student's QR. If guest flag says yes, confirm the guest is on the list.</p>
       <div class="row">
         <div>
           <video id="video" autoplay playsinline muted></video>
@@ -306,6 +310,8 @@
     const CONFIG_STORAGE_KEY = 'studentQrConfig';
     const PROFILES_STORAGE_KEY = 'studentQrProfiles';
     const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
+    const SETUP_UNLOCK_KEY = 'studentQrSetupUnlocked';
+    const SETUP_PASSWORD = 'evie3843';
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
@@ -453,9 +459,43 @@
     function getInitialTabFromUrl() {
       try {
         const tab = new URL(window.location.href).searchParams.get('tab');
-        return ['setup', 'dashboard', 'scanner'].includes(tab) ? tab : 'setup';
+        return ['setup', 'dashboard', 'scanner'].includes(tab) ? tab : 'scanner';
       } catch {
-        return 'setup';
+        return 'scanner';
+      }
+    }
+
+    function isSetupUnlocked() {
+      return sessionStorage.getItem(SETUP_UNLOCK_KEY) === 'true';
+    }
+
+    function updateSetupLockUi() {
+      ids('setupLockStatus').textContent = isSetupUnlocked()
+        ? 'Setup is unlocked for this device session.'
+        : 'Setup is locked.';
+      ids('lockSetup').disabled = !isSetupUnlocked();
+    }
+
+    function unlockSetup() {
+      const entered = window.prompt('Enter the setup password');
+      if (entered == null) return false;
+      if (entered !== SETUP_PASSWORD) {
+        toast('Incorrect setup password.', false);
+        return false;
+      }
+
+      sessionStorage.setItem(SETUP_UNLOCK_KEY, 'true');
+      updateSetupLockUi();
+      toast('Setup unlocked.');
+      return true;
+    }
+
+    function lockSetup() {
+      sessionStorage.removeItem(SETUP_UNLOCK_KEY);
+      updateSetupLockUi();
+      toast('Setup locked.');
+      if (!ids('setup').classList.contains('hidden')) {
+        setTab('scanner');
       }
     }
 
@@ -973,7 +1013,17 @@
       ids('video').srcObject = null;
     }
 
-    function setTab(tab) {
+    function setTab(tab, options = {}) {
+      if (tab === 'setup' && !options.bypassLock && !isSetupUnlocked()) {
+        const unlocked = unlockSetup();
+        if (!unlocked) {
+          if (options.fallbackTab) {
+            setTab(options.fallbackTab, { bypassLock: true });
+          }
+          return;
+        }
+      }
+
       document.querySelectorAll('.tab').forEach((b) => {
         b.classList.toggle('active', b.dataset.tab === tab);
       });
@@ -984,7 +1034,7 @@
 
     function bindEvents() {
       document.querySelectorAll('.tab').forEach((btn) => {
-        btn.addEventListener('click', () => setTab(btn.dataset.tab));
+        btn.addEventListener('click', () => setTab(btn.dataset.tab, { fallbackTab: 'scanner' }));
       });
       ids('saveConfig').addEventListener('click', saveConfig);
       ids('loadData').addEventListener('click', loadRoster);
@@ -992,6 +1042,7 @@
       ids('loadProfile').addEventListener('click', loadSelectedProfile);
       ids('copyShareLink').addEventListener('click', copyShareLink);
       ids('setupProfileSelect').addEventListener('change', loadSelectedProfile);
+      ids('lockSetup').addEventListener('click', lockSetup);
       ids('refreshBtn').addEventListener('click', loadRoster);
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);
@@ -1015,8 +1066,9 @@
 
     loadSavedConfig();
     bindEvents();
+    updateSetupLockUi();
     renderDashboard();
-    setTab(getInitialTabFromUrl());
+    setTab(getInitialTabFromUrl(), { fallbackTab: 'scanner' });
 
     if (state.config && getInitialTabFromUrl() !== 'setup') {
       loadRoster();
