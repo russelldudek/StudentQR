@@ -168,9 +168,10 @@ function admitRow_(config, qrValue) {
   }
 
   if (config.allowedStatuses.length) {
-    var allowed = false;
+    var normalizedStatusValue = normalizeKey_(statusValue);
+    var allowed = !normalizedStatusValue || normalizedStatusValue === 'missing';
     for (var i = 0; i < config.allowedStatuses.length; i += 1) {
-      if (normalizeKey_(config.allowedStatuses[i]) === normalizeKey_(statusValue)) {
+      if (normalizeKey_(config.allowedStatuses[i]) === normalizedStatusValue) {
         allowed = true;
         break;
       }
