@@ -214,6 +214,10 @@
           <label for="timeZone">Timezone for timestamp</label>
           <input id="timeZone" value="America/New_York" />
         </div>
+        <div>
+          <label for="testMode">Test mode</label>
+          <input id="testMode" type="checkbox" />
+        </div>
       </div>
       <div class="row" style="margin-top: 12px;">
         <button id="saveConfig">Save setup</button>
@@ -242,12 +246,13 @@
         </div>
       </div>
       <p class="muted">Save by dance name, then copy the check-in link from the published site so other staff can open the same scanner setup on their phones.</p>
-      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record.</p>
+      <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record unless test mode is enabled.</p>
     </section>
 
     <section id="dashboard" class="card hidden">
       <h2>Dashboard</h2>
       <p class="muted" id="dashboardEventTitle">No dance selected.</p>
+      <div id="testModeBanner" class="hidden" style="margin-bottom:12px;"></div>
       <div class="stats" id="stats"></div>
       <div class="row" style="margin:12px 0;">
         <input id="searchInput" placeholder="Search by name or QR value" />
@@ -284,7 +289,7 @@
         <div>
           <label for="manualQr">Manual QR value input (fallback)</label>
           <input id="manualQr" placeholder="Paste scanned value" />
-          <button id="manualSubmit" style="margin-top: 8px;">Mark admitted</button>
+          <button id="manualSubmit" style="margin-top: 8px;">Scan / admit</button>
           <div id="scannerGuestFlag" class="hidden" style="margin-top: 12px;"></div>
           <h3 style="margin-top:16px;">Last scan result</h3>
           <div id="scanResult" class="stat">
@@ -318,7 +323,7 @@
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
-      'guestCol', 'admittedAtCol', 'eventName', 'allowedStatuses', 'admittedValue', 'timeZone'
+      'guestCol', 'admittedAtCol', 'eventName', 'allowedStatuses', 'admittedValue', 'timeZone', 'testMode'
     ];
 
     function toast(msg, ok = true) {
@@ -332,7 +337,10 @@
 
     function getConfigFromInputs() {
       const cfg = {};
-      for (const f of fields) cfg[f] = ids(f).value.trim();
+      for (const f of fields) {
+        const el = ids(f);
+        cfg[f] = el.type === 'checkbox' ? el.checked : el.value.trim();
+      }
       cfg.allowedStatuses = cfg.allowedStatuses.split(',').map(s => s.trim()).filter(Boolean);
       return cfg;
     }
@@ -341,8 +349,23 @@
       if (!cfg) return;
       for (const f of fields) {
         if (!(f in cfg)) continue;
-        ids(f).value = Array.isArray(cfg[f]) ? cfg[f].join(', ') : cfg[f];
+        const el = ids(f);
+        if (el.type === 'checkbox') {
+          el.checked = Boolean(cfg[f]);
+          continue;
+        }
+        el.value = Array.isArray(cfg[f]) ? cfg[f].join(', ') : cfg[f];
       }
+    }
+
+    function updateTestModeUi(cfg = state.config || getConfigFromInputs()) {
+      const enabled = Boolean(cfg?.testMode);
+      const banner = ids('testModeBanner');
+      banner.classList.toggle('hidden', !enabled);
+      banner.innerHTML = enabled
+        ? '<span class="status-pill status-guest">Test mode enabled</span><div class="muted" style="margin-top: 6px;">Scans will validate codes without writing attendance changes.</div>'
+        : '';
+      ids('manualSubmit').textContent = enabled ? 'Test scan only' : 'Scan / admit';
     }
 
     function getProfiles() {
@@ -447,6 +470,7 @@
       updateShareLinkOutput(cfg);
       updateEventTitles(cfg);
       updateSharedModeUi();
+      updateTestModeUi(cfg);
     }
 
     function updateEventTitles(cfg = state.config) {
@@ -935,6 +959,8 @@
         <div class="stat"><div class="muted">Bringing Guest</div><div class="value">${guestCount}</div></div>
         <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
       `;
+
+      updateTestModeUi();
     }
 
     function updateScannerGuestFlag(bringingGuest, guestValue = '') {
@@ -953,6 +979,14 @@
 
       target.classList.add('hidden');
       target.innerHTML = '';
+    }
+
+    function renderScanStatusMessage(row, cfg, isTestMode) {
+      if (isTestMode) {
+        return `Test mode: no attendance update was written. Current status is ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || 'Missing')}.`;
+      }
+
+      return `Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.`;
     }
 
     function escapeHtml(s) {
@@ -978,16 +1012,17 @@
         const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
         const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
+        const isTestMode = Boolean(cfg?.testMode || res?.testMode);
         updateScannerGuestFlag(bringingGuest, guestValue || 'No');
         ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
-          <div class="muted">Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.</div>
+          <div class="muted">${renderScanStatusMessage(row, cfg, isTestMode)}</div>
           <div class="muted">${bringingGuest ? 'Guest flag: YES. Confirm the guest is also on the admittance list.' : `Guest flag: ${escapeHtml(guestValue || 'No')}`}</div>`;
 
         await loadRoster({ silent: true });
         if (bringingGuest) {
           toast(`Guest check needed for ${displayName || qrValue}.`, false);
         }
-        toast(`Admitted: ${displayName || qrValue}`);
+        toast(`${isTestMode ? 'Tested' : 'Admitted'}: ${displayName || qrValue}`);
       } catch (err) {
         toast(toFriendlyError(err).message, false);
       }
@@ -1153,6 +1188,7 @@
     startAutoRefresh();
     updateEventTitles();
     updateSharedModeUi();
+    updateTestModeUi();
     updateScannerGuestFlag(false, '');
     renderDashboard();
     setTab(getInitialTabFromUrl(), { fallbackTab: 'scanner' });

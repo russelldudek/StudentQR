@@ -103,6 +103,7 @@ function buildConfig_(request) {
   merged.admittedAtCol = merged.admittedAtCol || 'Admitted At';
   merged.admittedValue = merged.admittedValue || 'Admitted';
   merged.timeZone = merged.timeZone || Session.getScriptTimeZone() || 'America/New_York';
+  merged.testMode = normalizeBoolean_(merged.testMode);
 
   return merged;
 }
@@ -181,6 +182,14 @@ function admitRow_(config, qrValue) {
     config.timeZone,
     "yyyy-MM-dd'T'HH:mm:ss"
   );
+
+  if (config.testMode) {
+    return {
+      row: target.row,
+      message: 'Test mode enabled. No attendance update was written.',
+      testMode: true,
+    };
+  }
 
   var sheetRowNumber = target.rowNumber;
   context.sheet.getRange(sheetRowNumber, context.headerMap[config.statusCol]).setValue(config.admittedValue);
@@ -339,6 +348,12 @@ function normalizeAllowedStatuses_(value) {
       return item.trim();
     })
     .filter(Boolean);
+}
+
+function normalizeBoolean_(value) {
+  if (typeof value === 'boolean') return value;
+  var normalized = String(value || '').toLowerCase().trim();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
 }
 
 function generateUniqueQrId_(config, existingQrIds) {

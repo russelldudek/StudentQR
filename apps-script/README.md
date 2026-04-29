@@ -33,6 +33,7 @@ Optional but supported:
 - `POST { action: "list", config }` also returns `{ rows: [...] }`
 - `POST { action: "assignQrIds", config }` fills blank `QR_ID` cells without overwriting existing ones
 - `POST { action: "admit", qrValue, config }` updates `Status` and `Admitted At`
+- If `testMode` is enabled in config, admit validates the code without writing attendance changes
 
 ## Notes
 
