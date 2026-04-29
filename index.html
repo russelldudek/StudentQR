@@ -1184,22 +1184,33 @@
         </div>`;
     }
 
-    function getScanDisplayQrValue(row, cfg, scannedQrValue) {
+    function findCanonicalScanRow(responseRow, scannedQrValue, matchedQrValue = '') {
+      const normalizedScanned = normalizeKey(scannedQrValue);
+      const normalizedMatched = normalizeKey(matchedQrValue);
+      const normalizedRowNumber = String(responseRow?._rowNumber || '').trim();
+
+      return state.rows.find((entry) => {
+        if (!entry) return false;
+        if (normalizedMatched && normalizeKey(entry.qr) === normalizedMatched) return true;
+        if (normalizedScanned && normalizeKey(entry.qr) === normalizedScanned) return true;
+        if (normalizedRowNumber && String(entry.raw?._rowNumber || '').trim() === normalizedRowNumber) return true;
+        return false;
+      }) || null;
+    }
+
+    function getScanDisplayQrValue(row, cfg, scannedQrValue, matchedQrValue = '') {
+      if (matchedQrValue && String(matchedQrValue).trim()) {
+        return String(matchedQrValue).trim();
+      }
+
+      const canonicalRow = findCanonicalScanRow(row, scannedQrValue, matchedQrValue);
+      if (canonicalRow?.qr) return canonicalRow.qr;
+
       const configuredKey = String(cfg?.qrCol || '').trim();
       const directValue = configuredKey && row && typeof row === 'object'
         ? String(row[configuredKey] || '').trim()
         : '';
       if (directValue) return directValue;
-
-      const normalizedScanValue = normalizeKey(scannedQrValue);
-      const normalizedRowNumber = String(row?._rowNumber || '').trim();
-      const rosterMatch = state.rows.find((entry) => {
-        if (!entry) return false;
-        if (normalizedScanValue && normalizeKey(entry.qr) === normalizedScanValue) return true;
-        if (normalizedRowNumber && String(entry.raw?._rowNumber || '').trim() === normalizedRowNumber) return true;
-        return false;
-      });
-      if (rosterMatch?.qr) return rosterMatch.qr;
 
       const fallbackValue = readRowValue(row, cfg.qrCol, ['QR_ID', 'QR', 'qr']);
       if (fallbackValue) return String(fallbackValue).trim();
@@ -1236,11 +1247,14 @@
         }
 
         const cfg = state.config;
-        const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
-        const statusValue = readRowValue(row, cfg.statusCol, ['Status']) || 'Missing';
-        const admittedAtValue = readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '';
-        const qrDisplayValue = getScanDisplayQrValue(row, cfg, qrValue);
-        const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
+        const canonicalScanRow = findCanonicalScanRow(row, qrValue, res?.matchedQrValue);
+        const displayRow = canonicalScanRow?.raw || row;
+        const displayName = canonicalScanRow?.name
+          || `${readRowValue(displayRow, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(displayRow, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
+        const statusValue = canonicalScanRow?.status || readRowValue(displayRow, cfg.statusCol, ['Status']) || 'Missing';
+        const admittedAtValue = canonicalScanRow?.admittedAt || readRowValue(displayRow, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '';
+        const qrDisplayValue = getScanDisplayQrValue(displayRow, cfg, qrValue, res?.matchedQrValue);
+        const guestValue = canonicalScanRow?.guestValue || readRowValue(displayRow, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
         if (Object.prototype.hasOwnProperty.call(res || {}, 'testMode')) {
           syncEffectiveTestMode(res.testMode);

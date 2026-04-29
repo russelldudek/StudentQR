@@ -149,8 +149,7 @@ function admitRow_(config, qrValue) {
     throw new Error('The worksheet does not contain any student rows.');
   }
 
-  var rows = objectRowsFromValues_(values);
-  var target = findRowByQr_(rows, qrValue, config.qrCol);
+  var target = findRowByQrInValues_(values, context, qrValue, config.qrCol);
 
   if (!target) {
     return {
@@ -163,6 +162,7 @@ function admitRow_(config, qrValue) {
   if (statusValue && normalizeKey_(statusValue) === normalizeKey_(config.admittedValue)) {
     return {
       row: target.row,
+      matchedQrValue: target.qrValue,
       message: 'Student was already marked as admitted.',
     };
   }
@@ -179,6 +179,7 @@ function admitRow_(config, qrValue) {
       return {
         error: 'Student cannot be admitted from status "' + statusValue + '".',
         row: target.row,
+        matchedQrValue: target.qrValue,
       };
     }
   }
@@ -192,6 +193,7 @@ function admitRow_(config, qrValue) {
   if (config.testMode) {
     return {
       row: target.row,
+      matchedQrValue: target.qrValue,
       message: 'Test mode enabled. No attendance update was written.',
       testMode: true,
     };
@@ -206,6 +208,7 @@ function admitRow_(config, qrValue) {
 
   return {
     row: updatedRow,
+    matchedQrValue: target.qrValue,
     message: 'Student admitted successfully.',
     testMode: false,
   };
@@ -337,15 +340,17 @@ function rowFromHeaders_(headers, rowValues, rowNumber) {
   return row;
 }
 
-function findRowByQr_(rows, qrValue, qrColumnName) {
+function findRowByQrInValues_(values, context, qrValue, qrColumnName) {
+  var qrColumnIndex = context.headerMap[qrColumnName];
   var normalizedTarget = normalizeKey_(qrValue);
 
-  for (var i = 0; i < rows.length; i += 1) {
-    var row = rows[i];
-    if (normalizeKey_(row[qrColumnName]) === normalizedTarget) {
+  for (var i = 1; i < values.length; i += 1) {
+    var currentQrValue = String(values[i][qrColumnIndex - 1] || '').trim();
+    if (normalizeKey_(currentQrValue) === normalizedTarget) {
       return {
-        row: row,
-        rowNumber: row._rowNumber,
+        row: rowFromHeaders_(context.headers, values[i], i + 1),
+        rowNumber: i + 1,
+        qrValue: currentQrValue,
       };
     }
   }
