@@ -221,6 +221,27 @@
         <button id="assignQrIds" class="btn-secondary">Assign missing QR IDs</button>
         <button id="resetConfig" class="btn-danger">Reset saved setup</button>
       </div>
+      <h3>4) Saved dance setups</h3>
+      <div class="grid">
+        <div>
+          <label for="setupProfileSelect">Saved dance name</label>
+          <select id="setupProfileSelect">
+            <option value="">No saved dance setups yet</option>
+          </select>
+        </div>
+        <div>
+          <label for="shareLinkOutput">Shareable check-in link</label>
+          <input id="shareLinkOutput" readonly placeholder="Save a dance setup to generate a share link" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <div class="row">
+            <button id="loadProfile" class="btn-secondary">Load saved dance</button>
+            <button id="copyShareLink" class="btn-secondary">Copy share link</button>
+          </div>
+        </div>
+      </div>
+      <p class="muted">Save by dance name, then copy the check-in link from the published site so other staff can open the same scanner setup on their phones.</p>
       <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> updates a row and returns updated record.</p>
     </section>
 
@@ -282,6 +303,9 @@
     };
 
     const ids = (id) => document.getElementById(id);
+    const CONFIG_STORAGE_KEY = 'studentQrConfig';
+    const PROFILES_STORAGE_KEY = 'studentQrProfiles';
+    const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
 
     const fields = [
       'sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol',
@@ -312,26 +336,216 @@
       }
     }
 
-    function saveConfig() {
-      const cfg = getConfigFromInputs();
-      if (!cfg.apiUrl || !cfg.sheetUrl || !cfg.firstNameCol || !cfg.lastNameCol || !cfg.qrCol) {
-        toast('Please complete required setup fields.', false);
+    function getProfiles() {
+      const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
+      if (!raw) return {};
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (err) {
+        console.error(err);
+        return {};
+      }
+    }
+
+    function setProfiles(profiles) {
+      localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+    }
+
+    function rememberProfile(cfg) {
+      if (!cfg?.eventName) return;
+      const profiles = getProfiles();
+      profiles[cfg.eventName] = cfg;
+      setProfiles(profiles);
+    }
+
+    function setActiveProfile(profileName) {
+      if (!profileName) {
+        localStorage.removeItem(ACTIVE_PROFILE_KEY);
         return;
       }
-      localStorage.setItem('studentQrConfig', JSON.stringify(cfg));
+      localStorage.setItem(ACTIVE_PROFILE_KEY, profileName);
+    }
+
+    function getActiveProfileName() {
+      return localStorage.getItem(ACTIVE_PROFILE_KEY) || '';
+    }
+
+    function encodeConfigForUrl(cfg) {
+      return btoa(unescape(encodeURIComponent(JSON.stringify(cfg))))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+    }
+
+    function decodeConfigFromUrl(value) {
+      const normalized = String(value || '')
+        .replace(/-/g, '+')
+        .replace(/_/g, '/');
+      const padded = normalized + '==='.slice((normalized.length + 3) % 4);
+      return JSON.parse(decodeURIComponent(escape(atob(padded))));
+    }
+
+    function buildShareUrl(cfg) {
+      if (!cfg?.eventName || window.location.protocol === 'file:') return '';
+      const url = new URL(window.location.href);
+      url.searchParams.set('setup', encodeConfigForUrl(cfg));
+      url.searchParams.set('tab', 'scanner');
+      url.hash = '';
+      return url.toString();
+    }
+
+    function updateShareLinkOutput(cfg = state.config || getConfigFromInputs()) {
+      const shareUrl = buildShareUrl(cfg);
+      ids('shareLinkOutput').value = shareUrl || '';
+      ids('copyShareLink').disabled = !shareUrl;
+    }
+
+    function updateProfileSelect(selectedName = '') {
+      const profiles = getProfiles();
+      const names = Object.keys(profiles).sort((a, b) => a.localeCompare(b));
+      const select = ids('setupProfileSelect');
+
+      if (!names.length) {
+        select.innerHTML = '<option value="">No saved dance setups yet</option>';
+        select.disabled = true;
+        ids('loadProfile').disabled = true;
+        return;
+      }
+
+      select.disabled = false;
+      ids('loadProfile').disabled = false;
+      select.innerHTML = names.map((name) => {
+        const selected = name === selectedName ? ' selected' : '';
+        return `<option value="${escapeHtml(name)}"${selected}>${escapeHtml(name)}</option>`;
+      }).join('');
+    }
+
+    function applyConfig(cfg, options = {}) {
+      if (!cfg) return;
       state.config = cfg;
-      toast('Setup saved locally.');
+      fillInputsFromConfig(cfg);
+
+      if (options.persistCurrent !== false) {
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cfg));
+      }
+
+      if (options.activeProfileName !== undefined) {
+        setActiveProfile(options.activeProfileName);
+      }
+
+      updateProfileSelect(options.activeProfileName || getActiveProfileName() || cfg.eventName || '');
+      updateShareLinkOutput(cfg);
+    }
+
+    function getSharedConfigFromUrl() {
+      try {
+        const url = new URL(window.location.href);
+        const encodedConfig = url.searchParams.get('setup');
+        if (!encodedConfig) return null;
+        return decodeConfigFromUrl(encodedConfig);
+      } catch (err) {
+        console.error(err);
+        return null;
+      }
+    }
+
+    function getInitialTabFromUrl() {
+      try {
+        const tab = new URL(window.location.href).searchParams.get('tab');
+        return ['setup', 'dashboard', 'scanner'].includes(tab) ? tab : 'setup';
+      } catch {
+        return 'setup';
+      }
+    }
+
+    function saveConfig(options = {}) {
+      const cfg = getConfigFromInputs();
+      if (!cfg.apiUrl || !cfg.sheetUrl || !cfg.firstNameCol || !cfg.lastNameCol || !cfg.qrCol || !cfg.eventName) {
+        if (!options.silent) {
+          toast('Please complete required setup fields, including the dance name.', false);
+        }
+        return null;
+      }
+
+      rememberProfile(cfg);
+      applyConfig(cfg, { activeProfileName: cfg.eventName, persistCurrent: true });
+
+      if (!options.silent) {
+        toast(`Saved setup for ${cfg.eventName}.`);
+      }
+
+      return cfg;
     }
 
     function loadSavedConfig() {
-      const raw = localStorage.getItem('studentQrConfig');
-      if (!raw) return;
+      const sharedConfig = getSharedConfigFromUrl();
+      if (sharedConfig) {
+        rememberProfile(sharedConfig);
+        applyConfig(sharedConfig, {
+          activeProfileName: sharedConfig.eventName || '',
+          persistCurrent: true,
+        });
+        return;
+      }
+
+      const profiles = getProfiles();
+      const activeProfileName = getActiveProfileName();
+      if (activeProfileName && profiles[activeProfileName]) {
+        applyConfig(profiles[activeProfileName], {
+          activeProfileName,
+          persistCurrent: true,
+        });
+        return;
+      }
+
+      const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+      if (!raw) {
+        updateProfileSelect('');
+        updateShareLinkOutput(null);
+        return;
+      }
+
       try {
         const cfg = JSON.parse(raw);
-        state.config = cfg;
-        fillInputsFromConfig(cfg);
+        rememberProfile(cfg);
+        applyConfig(cfg, {
+          activeProfileName: cfg?.eventName || '',
+          persistCurrent: true,
+        });
       } catch (err) {
         console.error(err);
+      }
+    }
+
+    function loadSelectedProfile() {
+      const profileName = ids('setupProfileSelect').value;
+      const profiles = getProfiles();
+      const cfg = profiles[profileName];
+      if (!cfg) {
+        toast('Selected dance setup was not found.', false);
+        return;
+      }
+      applyConfig(cfg, { activeProfileName: profileName, persistCurrent: true });
+      toast(`Loaded setup for ${profileName}.`);
+    }
+
+    async function copyShareLink() {
+      const cfg = state.config || getConfigFromInputs();
+      const shareUrl = buildShareUrl(cfg);
+
+      if (!shareUrl) {
+        toast('Open the published GitHub Pages site before copying a share link for staff devices.', false);
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        toast('Share link copied.');
+      } catch (err) {
+        console.error(err);
+        ids('shareLinkOutput').select();
+        toast('Could not copy automatically. Copy the link from the field.', false);
       }
     }
 
@@ -579,7 +793,8 @@
 
     async function loadRoster() {
       try {
-        saveConfig();
+        const cfg = saveConfig({ silent: true });
+        if (!cfg) return;
         let data;
         let rows = [];
         try {
@@ -623,7 +838,8 @@
 
     async function assignMissingQrIds() {
       try {
-        saveConfig();
+        const cfg = saveConfig({ silent: true });
+        if (!cfg) return;
         const data = await callApi('assignQrIds', {});
         const assignedCount = Number(data?.assignedCount || 0);
         const skippedCount = Number(data?.skippedCount || 0);
@@ -773,14 +989,26 @@
       ids('saveConfig').addEventListener('click', saveConfig);
       ids('loadData').addEventListener('click', loadRoster);
       ids('assignQrIds').addEventListener('click', assignMissingQrIds);
+      ids('loadProfile').addEventListener('click', loadSelectedProfile);
+      ids('copyShareLink').addEventListener('click', copyShareLink);
+      ids('setupProfileSelect').addEventListener('change', loadSelectedProfile);
       ids('refreshBtn').addEventListener('click', loadRoster);
       ids('searchInput').addEventListener('input', renderDashboard);
       ids('startScan').addEventListener('click', startScanning);
       ids('stopScan').addEventListener('click', stopScanning);
       ids('manualSubmit').addEventListener('click', () => admitByQr(ids('manualQr').value.trim()));
       ids('resetConfig').addEventListener('click', () => {
-        localStorage.removeItem('studentQrConfig');
+        const cfg = state.config || getConfigFromInputs();
+        const profiles = getProfiles();
+        if (cfg?.eventName && profiles[cfg.eventName]) {
+          delete profiles[cfg.eventName];
+          setProfiles(profiles);
+        }
+        localStorage.removeItem(CONFIG_STORAGE_KEY);
         state.config = null;
+        setActiveProfile('');
+        updateProfileSelect('');
+        updateShareLinkOutput(null);
         toast('Saved setup cleared.');
       });
     }
@@ -788,6 +1016,11 @@
     loadSavedConfig();
     bindEvents();
     renderDashboard();
+    setTab(getInitialTabFromUrl());
+
+    if (state.config && getInitialTabFromUrl() !== 'setup') {
+      loadRoster();
+    }
   </script>
 </body>
 </html>
