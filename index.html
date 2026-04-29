@@ -97,6 +97,101 @@
     .status-registered { background: rgba(56,189,248,.18); color: #93c5fd; }
     .status-missing { background: rgba(239,68,68,.18); color: #fca5a5; }
     .status-guest { background: rgba(245, 158, 11, .18); color: #fcd34d; }
+    .scan-feedback {
+      min-height: 260px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 12px;
+      padding: 20px;
+      border-width: 2px;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    }
+    .scan-feedback.scan-state-idle {
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(11, 18, 32, 0.95));
+      border-color: #334155;
+    }
+    .scan-feedback.scan-state-success {
+      background: linear-gradient(180deg, rgba(6, 78, 59, 0.95), rgba(6, 95, 70, 0.92));
+      border-color: #34d399;
+      box-shadow: 0 14px 36px rgba(16, 185, 129, 0.18);
+    }
+    .scan-feedback.scan-state-already {
+      background: linear-gradient(180deg, rgba(30, 64, 175, 0.94), rgba(30, 41, 59, 0.95));
+      border-color: #93c5fd;
+      box-shadow: 0 14px 36px rgba(59, 130, 246, 0.16);
+    }
+    .scan-feedback.scan-state-missing,
+    .scan-feedback.scan-state-blocked {
+      background: linear-gradient(180deg, rgba(127, 29, 29, 0.95), rgba(69, 10, 10, 0.96));
+      border-color: #f87171;
+      box-shadow: 0 14px 36px rgba(239, 68, 68, 0.18);
+    }
+    .scan-feedback.scan-state-test {
+      background: linear-gradient(180deg, rgba(120, 53, 15, 0.95), rgba(67, 20, 7, 0.96));
+      border-color: #fbbf24;
+      box-shadow: 0 14px 36px rgba(245, 158, 11, 0.18);
+    }
+    .scan-feedback .scan-kicker {
+      font-size: 0.9rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      opacity: 0.92;
+    }
+    .scan-feedback .scan-name {
+      font-size: clamp(2rem, 4vw, 3.3rem);
+      font-weight: 900;
+      line-height: 1.04;
+    }
+    .scan-feedback .scan-detail {
+      font-size: 1.08rem;
+      line-height: 1.5;
+      color: rgba(255,255,255,0.92);
+    }
+    .scan-feedback .scan-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .scan-feedback .scan-meta-card {
+      background: rgba(11, 18, 32, 0.28);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .scan-feedback .scan-meta-label {
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.72);
+    }
+    .scan-feedback .scan-meta-value {
+      margin-top: 4px;
+      font-size: 1rem;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .scanner-guest-flag {
+      border-radius: 14px;
+      border: 2px solid #fbbf24;
+      background: linear-gradient(180deg, rgba(120, 53, 15, 0.96), rgba(92, 34, 13, 0.96));
+      padding: 14px;
+      box-shadow: 0 10px 30px rgba(245, 158, 11, 0.18);
+    }
+    .scanner-guest-flag .guest-flag-title {
+      font-size: 1.35rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #fde68a;
+    }
+    .scanner-guest-flag .guest-flag-detail {
+      margin-top: 6px;
+      color: rgba(255,255,255,0.92);
+      line-height: 1.45;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -292,9 +387,10 @@
           <button id="manualSubmit" style="margin-top: 8px;">Scan / admit</button>
           <div id="scannerGuestFlag" class="hidden" style="margin-top: 12px;"></div>
           <h3 style="margin-top:16px;">Last scan result</h3>
-          <div id="scanResult" class="stat">
-            <div class="value">Waiting...</div>
-            <div class="muted">No scan yet.</div>
+          <div id="scanResult" class="stat scan-feedback scan-state-idle">
+            <div class="scan-kicker">Ready</div>
+            <div class="scan-name">Waiting for scan</div>
+            <div class="scan-detail">Start the camera or paste a QR value to validate the next student.</div>
           </div>
         </div>
       </div>
@@ -1041,26 +1137,51 @@
       const target = ids('scannerGuestFlag');
       if (bringingGuest) {
         target.classList.remove('hidden');
-        target.innerHTML = '<span class="status-pill status-guest">Guest flag: YES</span><div class="muted" style="margin-top: 6px;">Confirm the guest is also on the admittance list.</div>';
+        target.className = 'scanner-guest-flag';
+        target.innerHTML = '<div class="guest-flag-title">Guest check required</div><div class="guest-flag-detail">This student is marked as bringing a guest. Confirm the guest is also on the admittance list before entry.</div>';
         return;
       }
 
       if (guestValue) {
         target.classList.remove('hidden');
-        target.innerHTML = `<span class="muted">Guest flag: ${escapeHtml(guestValue)}</span>`;
+        target.className = 'stat';
+        target.innerHTML = `<div class="muted">Guest flag</div><div class="value" style="font-size:1.15rem;">${escapeHtml(guestValue)}</div>`;
         return;
       }
 
-      target.classList.add('hidden');
+      target.className = 'hidden';
       target.innerHTML = '';
     }
 
     function renderScanStatusMessage(row, cfg, isTestMode) {
       if (isTestMode) {
-        return `Test mode: no attendance update was written. Current status is ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || 'Missing')}.`;
+        return `Test mode: no attendance update was written. Current status is ${readRowValue(row, cfg.statusCol, ['Status']) || 'Missing'}.`;
       }
 
-      return `Marked as ${escapeHtml(readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue)} at ${escapeHtml(readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-')}.`;
+      return `Marked as ${readRowValue(row, cfg.statusCol, ['Status']) || cfg.admittedValue} at ${readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '-'}.`;
+    }
+
+    function renderScanResultCard({ stateClass, kicker, name, detail, status, qrValue, admittedAt }) {
+      const target = ids('scanResult');
+      target.className = `stat scan-feedback ${stateClass}`;
+      target.innerHTML = `
+        <div class="scan-kicker">${escapeHtml(kicker)}</div>
+        <div class="scan-name">${escapeHtml(name)}</div>
+        <div class="scan-detail">${escapeHtml(detail)}</div>
+        <div class="scan-meta">
+          <div class="scan-meta-card">
+            <div class="scan-meta-label">Status</div>
+            <div class="scan-meta-value">${escapeHtml(status || '-')}</div>
+          </div>
+          <div class="scan-meta-card">
+            <div class="scan-meta-label">QR</div>
+            <div class="scan-meta-value">${escapeHtml(qrValue || '-')}</div>
+          </div>
+          <div class="scan-meta-card">
+            <div class="scan-meta-label">Admitted At</div>
+            <div class="scan-meta-value">${escapeHtml(admittedAt || '-')}</div>
+          </div>
+        </div>`;
     }
 
     function escapeHtml(s) {
@@ -1078,12 +1199,24 @@
         const res = await callApi('admit', { qrValue });
         const row = res.row || null;
         if (!row) {
-          ids('scanResult').innerHTML = '<div class="value">Not found</div><div class="muted">No matching student row.</div>';
+          updateScannerGuestFlag(false, '');
+          renderScanResultCard({
+            stateClass: 'scan-state-missing',
+            kicker: 'Not On List',
+            name: 'Student not found',
+            detail: 'This QR code does not match any student on the roster.',
+            status: 'No match',
+            qrValue,
+            admittedAt: '',
+          });
           return toast('Student not found for this QR value.', false);
         }
 
         const cfg = state.config;
         const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
+        const statusValue = readRowValue(row, cfg.statusCol, ['Status']) || 'Missing';
+        const admittedAtValue = readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '';
+        const qrDisplayValue = readRowValue(row, cfg.qrCol, ['QR_ID', 'QR', 'qr']) || qrValue;
         const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']);
         const bringingGuest = isGuestFlagEnabled(guestValue);
         if (Object.prototype.hasOwnProperty.call(res || {}, 'testMode')) {
@@ -1091,15 +1224,60 @@
         }
         const isTestMode = Boolean((Object.prototype.hasOwnProperty.call(res || {}, 'testMode') ? res.testMode : cfg?.testMode));
         updateScannerGuestFlag(bringingGuest, guestValue || 'No');
-        ids('scanResult').innerHTML = `<div class="value">${escapeHtml(displayName || 'Updated')}</div>
-          <div class="muted">${renderScanStatusMessage(row, cfg, isTestMode)}</div>
-          <div class="muted">${bringingGuest ? 'Guest flag: YES. Confirm the guest is also on the admittance list.' : `Guest flag: ${escapeHtml(guestValue || 'No')}`}</div>`;
+
+        const alreadyAdmitted = String(res?.message || '').toLowerCase().includes('already marked as admitted');
+        const blocked = Boolean(res?.error);
+
+        if (blocked) {
+          renderScanResultCard({
+            stateClass: 'scan-state-blocked',
+            kicker: 'Cannot Admit',
+            name: displayName || 'Admission blocked',
+            detail: res.error,
+            status: statusValue,
+            qrValue: qrDisplayValue,
+            admittedAt: admittedAtValue,
+          });
+        } else if (alreadyAdmitted) {
+          renderScanResultCard({
+            stateClass: 'scan-state-already',
+            kicker: 'Already Scanned',
+            name: displayName || 'Already admitted',
+            detail: res.message || 'This student has already been admitted.',
+            status: statusValue,
+            qrValue: qrDisplayValue,
+            admittedAt: admittedAtValue,
+          });
+        } else if (isTestMode) {
+          renderScanResultCard({
+            stateClass: 'scan-state-test',
+            kicker: 'Test Scan Only',
+            name: displayName || 'Student found',
+            detail: renderScanStatusMessage(row, cfg, true),
+            status: statusValue,
+            qrValue: qrDisplayValue,
+            admittedAt: admittedAtValue,
+          });
+        } else {
+          renderScanResultCard({
+            stateClass: 'scan-state-success',
+            kicker: 'Checked In',
+            name: displayName || 'Student admitted',
+            detail: renderScanStatusMessage(row, cfg, false),
+            status: statusValue,
+            qrValue: qrDisplayValue,
+            admittedAt: admittedAtValue,
+          });
+        }
 
         await loadRoster({ silent: true });
+        if (blocked) {
+          return toast(res.error, false);
+        }
         if (bringingGuest) {
           toast(`Guest check needed for ${displayName || qrValue}.`, false);
         }
-        toast(`${isTestMode ? 'Tested' : 'Admitted'}: ${displayName || qrValue}`);
+        toast(`${alreadyAdmitted ? 'Already admitted' : isTestMode ? 'Tested' : 'Admitted'}: ${displayName || qrValue}`);
       } catch (err) {
         toast(toFriendlyError(err).message, false);
       }
