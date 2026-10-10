@@ -117,14 +117,26 @@ rules. Door-team human verification remains explicit.
 ## Attendance Ledger
 
 Row-1 schema: Event ID; Person Type; Ticket ID (JSON); Source Student ID (JSON);
-Status; Admitted At. Identity cells contain JSON-encoded strings so Sheets
+Subject Assignment SHA256; Status; Admitted At. The assignment fingerprint is
+an implementation-plan refinement to protect against guest replacements under
+the same host/ticket, not a new eligibility rule. Identity cells contain
+JSON-encoded strings so Sheets
 cannot treat a ticket as a number or formula; readers validate and decode them
 back into exact strings. Never store names or raw access keys in the ledger.
 
 Each record binds one event/ticket to its person type and source student ID.
 Ledger validation refuses duplicate records, invalid identities, formulas,
 unknown statuses, incomplete timestamps, and a previously recorded ticket now
-assigned to a different identity. Historical records for removed subjects are
+assigned to a different identity. Compute the assignment fingerprint from the
+exact person type, ticket, source student ID, full name, and paired person's
+type/ticket/full name, omitting physical row number and admission state. Store
+only the digest, not names. A valid historic record whose assignment changed
+quarantines that current subject as Needs Review; it must neither inherit the
+old admission nor reset it. Cosmetic corrections also require owner review,
+because the source cannot distinguish them from replacement identities.
+Identical names/attributes alone cannot establish that two guests are the same
+person; the fingerprint protects detectable changes, not undetectable identity
+substitution. Historical records for removed subjects are
 retained; removing a source row must not reset attendance or allow ticket reuse.
 
 Live admission acquires the shared script lock, then reauthorizes the key,
