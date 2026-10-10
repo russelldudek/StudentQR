@@ -180,6 +180,16 @@ function newMirrorLinkKey_() {
   return homecomingDigest_([Utilities.getUuid(), Utilities.getUuid(), Utilities.getUuid()].join(':'));
 }
 
+function mirrorDeploymentUrl_() {
+  // Editor executions may report /dev. The owner can pin the verified deployment in Script Properties.
+  var configured = PropertiesService.getScriptProperties().getProperty('studentQrMirrorDeploymentUrl');
+  var url = configured === null ? ScriptApp.getService().getUrl() : configured;
+  if (typeof url !== 'string' || !/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url)) {
+    throw new Error('A verified Apps Script /exec deployment URL is required; configure studentQrMirrorDeploymentUrl in the owner editor.');
+  }
+  return url;
+}
+
 function initializeHomecomingMirrorTest() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error('Mirror initialization busy.');
@@ -187,8 +197,7 @@ function initializeHomecomingMirrorTest() {
     var binding = readHomecomingBinding_();
     if (!binding || !binding.prepared || !['preparing', 'initializing', 'ready'].includes(binding.stage)) throw new Error('Prepare the private mirror first.');
     var book = mirrorTarget_(binding);
-    var apiUrl = ScriptApp.getService().getUrl();
-    if (typeof apiUrl !== 'string' || !/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(apiUrl)) throw new Error('A deployed Apps Script /exec URL is required; /dev is not accepted.');
+    var apiUrl = mirrorDeploymentUrl_();
     var existing = readSharedEvent_();
     if (existing) {
       if (binding.stage !== 'ready') throw new Error('Initialization interrupted before links were delivered. Run recoverHomecomingMirrorAdminLink explicitly in the owner editor.');
@@ -233,7 +242,7 @@ function recoverHomecomingMirrorAdminLink() {
     if (!binding || !binding.prepared || !['initializing', 'ready'].includes(binding.stage) || !event) throw new Error('No recoverable mirror initialization found. Owner inspection required.');
     var ready = cloneObject_(binding); ready.stage = 'ready';
     assertHomecomingBinding_(ready, event);
-    var apiUrl = ScriptApp.getService().getUrl();
+    var apiUrl = mirrorDeploymentUrl_();
     if (event.config.apiUrl !== apiUrl) throw new Error('Recovery requires the original /exec deployment.');
     getGlobalTestMode_(event.config, event.config.testMode);
     readHomecomingContext_(ready, event.eventId);

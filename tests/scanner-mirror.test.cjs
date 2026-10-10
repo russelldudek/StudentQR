@@ -57,6 +57,26 @@ for (const url of [null, 'https://script.google.com/macros/s/FICTIONAL/dev', 'ht
     assert.throws(() => f.run('initializeHomecomingMirrorTest()'), /exec/i); assert.equal(f.properties.has('studentQrSharedDance'), false);
   });
 }
+test('owner-configured exec URL supports editor initialization when service returns dev', () => {
+  const f = fixture({ url: 'https://script.google.com/a/gatewayk12.org/macros/s/EDITOR/dev' });
+  f.properties.set('studentQrMirrorDeploymentUrl', 'https://script.google.com/macros/s/VERIFIED/exec');
+  f.run('prepareHomecomingMirrorTest()');
+  const links = f.run('initializeHomecomingMirrorTest()');
+  assert.equal(new URL(links.adminUrl).searchParams.get('api'), 'https://script.google.com/macros/s/VERIFIED/exec');
+  assert.equal(f.run('initializeHomecomingMirrorTest()').created, false);
+  assert.equal(f.run('recoverHomecomingMirrorAdminLink()').eventId, links.eventId);
+  f.properties.set('studentQrMirrorDeploymentUrl', 'https://script.google.com/macros/s/CHANGED/exec');
+  assert.throws(() => f.run('initializeHomecomingMirrorTest()'), /changed/i);
+  assert.throws(() => f.run('recoverHomecomingMirrorAdminLink()'), /original/i);
+});
+for (const invalid of ['https://evil.invalid/exec', 'https://script.google.com/macros/s/VERIFIED/dev', 'https://script.google.com/macros/s/VERIFIED/exec?token=wrong']) {
+  test('invalid owner deployment override fails closed: ' + invalid, () => {
+    const f = fixture(); f.properties.set('studentQrMirrorDeploymentUrl', invalid);
+    f.run('prepareHomecomingMirrorTest()');
+    assert.throws(() => f.run('initializeHomecomingMirrorTest()'), /exec/i);
+    assert.equal(f.properties.has('studentQrSharedDance'), false);
+  });
+}
 test('production binding tampering cannot provision or initialize', () => {
   const f = fixture(); f.run('prepareHomecomingMirrorTest()');
   const b = JSON.parse(f.properties.get('studentQrHomecomingBinding')); b.spreadsheetId = production;

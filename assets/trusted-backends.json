@@ -1,4 +1,6 @@
 {
   "version": 1,
-  "endpoints": []
+  "endpoints": [
+    "https://script.google.com/macros/s/AKfycbzmIl1v5FwYjtzszdo2rGm83ZxBGGs-bjnv9sIdMNmaw_yGBBrv54skQCc4t15rpSHp6A/exec"
+  ]
 }
