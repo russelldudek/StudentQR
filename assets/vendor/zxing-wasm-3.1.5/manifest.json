@@ -1,0 +1,11 @@
+{
+  "package": "zxing-wasm",
+  "version": "3.1.5",
+  "source": "https://registry.npmjs.org/zxing-wasm/-/zxing-wasm-3.1.5.tgz",
+  "integrity": "sha512-jmxXvTCR/qZxMz2XwR6V+nL2BlDTD1aux7ZWSH9BV77TG9u4k0VyHba/NCCHBHJ60Wg6VV0QL/SMlJczKhJI4w==",
+  "cppCommit": "2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4",
+  "sha256": {
+    "reader.js": "228e6d8ccb841c544386eeafd5f18294d3e4aa0e7aa20419bc51a0009b9d3c17",
+    "zxing_reader.wasm": "aecc1876de036c62c8419f67a5e1a16b1698a325bcd190aa84810d516e263931"
+  }
+}

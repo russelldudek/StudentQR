@@ -223,6 +223,8 @@
       border: 1px solid #334155;
       background: #000;
     }
+    .camera-stage { position: relative; }
+    .camera-stage::after { content: 'ONE TICKET ONLY'; position: absolute; inset: 12% 6%; border: 2px dashed #38bdf8; border-radius: 12px; color: #fff; padding: 6px; font-size: .75rem; text-shadow: 0 1px 3px #000; pointer-events: none; }
     .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
     .tab.active { background: var(--accent); color: #052814; }
     .hidden { display: none; }
@@ -402,7 +404,7 @@
       <p class="muted" id="scannerDecoderStatus" role="status">Supports Code 128 ticket barcodes and QR codes.</p>
       <div class="row">
         <div>
-          <video id="video" autoplay playsinline muted></video>
+          <div class="camera-stage"><video id="video" autoplay playsinline muted></video></div>
           <div class="row" style="margin-top:8px;">
             <button id="startScan">Start camera scan</button>
             <button id="stopScan" class="btn-secondary">Stop scan</button>
@@ -437,9 +439,11 @@
     </section>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script src="assets/vendor/jsqr-1.4.0.js"></script>
   <script src="assets/zxing-0.21.3.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="assets/vendor/qrcodejs-1.0.0.js"></script>
+  <script src="assets/vendor/zxing-wasm-3.1.5/reader.js"></script>
+  <script src="assets/ticket-decoder.js"></script>
   <script>
     const state = {
       config: null,
@@ -448,6 +452,8 @@
       scanning: false,
       detector: null,
       softwareBarcodeReader: null,
+      liveDecoder: null,
+      scanGeneration: 0,
       nextDecodeAt: 0,
       scanLoopId: null,
       scanCanvas: null,
@@ -908,6 +914,7 @@
       const normalizedCfg = normalizeConfigTestMode(cfg);
       const rosterChanged = rosterConfigKey(state.config) !== rosterConfigKey(normalizedCfg);
       if (rosterChanged) {
+        if (isLiveProtocol() || normalizedCfg.apiVersion === 2) stopScanning();
         cancelDecodedCandidate();
         renderScannerRelationship(null);
         state.rosterRequestId += 1;
@@ -1584,6 +1591,23 @@
 
     function candidateSnapshot(row) { return row ? JSON.stringify(row.raw) : ''; }
 
+    function isLiveProtocol() { return state.config?.apiVersion === 2; }
+
+    async function processLiveDecodedTicket(ticket, source, generation) {
+      if (!isLiveProtocol() || generation !== state.scanGeneration || document.hidden) return;
+      if (typeof ticket !== 'string' || !ticket || ticket.trim() !== ticket) throw new Error('Invalid exact ticket.');
+      setManualQrValue(ticket);
+      await admitByQr(ticket, { source, scanGeneration: generation });
+    }
+
+    async function decodeLiveTicket(input) {
+      if (!state.liveDecoder) await initializeCodeDetector();
+      const choice = state.liveDecoder.selectSingle(await state.liveDecoder.decode(input));
+      if (choice.kind === 'none') return '';
+      if (choice.kind !== 'single') throw new Error('Scan one ticket at a time. Multiple tickets or an invalid barcode are visible.');
+      return choice.ticket;
+    }
+
     function presentDecodedCandidate(ticket, source) {
       const matches = state.rows.filter(row => row.qr === ticket);
       const row = matches.length === 1 ? matches[0] : null;
@@ -1931,19 +1955,21 @@
       resetScanDeduping();
       const video = ids('video');
       state.nextDecodeAt = 0;
+      const generation = ++state.scanGeneration;
 
       if (!navigator.mediaDevices?.getUserMedia) {
         toast('Live camera scanning is not available on this device. Use Scan from photo or manual entry.', false);
         return;
       }
 
-      if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
+      if (!isLiveProtocol() && !('BarcodeDetector' in window) && typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
         toast('Scan decoders are unavailable. Reload the app or use manual ticket entry.', false);
         return;
       }
 
-      await initializeCodeDetector();
       try {
+        await initializeCodeDetector();
+        if (generation !== state.scanGeneration) return;
         state.stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
@@ -1956,6 +1982,7 @@
         toast('Could not open the camera. Check camera permissions and use HTTPS on phones.', false);
         return;
       }
+      if (generation !== state.scanGeneration) { stopScanning(); return; }
       video.srcObject = state.stream;
       video.setAttribute('playsinline', 'true');
       video.muted = true;
@@ -1965,6 +1992,7 @@
         console.warn(err);
       }
       await waitForVideoReady(video);
+      if (generation !== state.scanGeneration) { stopScanning(); return; }
       state.scanning = true;
 
       const loop = async () => {
@@ -1975,6 +2003,7 @@
         }
         try {
           const rawValue = await readQrFromVideo(video);
+          if (generation !== state.scanGeneration || !state.scanning || document.hidden) return;
           if (rawValue) {
             const normalizedValue = rawValue.trim();
             const now = Date.now();
@@ -1993,10 +2022,11 @@
 
             if (!shouldKeepScannerOpen()) {
               state.scanning = false;
-              stopScanning();
+              stopScanning({ invalidateDecode: false });
             }
 
-            if (state.decodeSource === 'software') presentDecodedCandidate(normalizedValue, 'camera');
+            if (isLiveProtocol()) await processLiveDecodedTicket(rawValue, 'camera', generation);
+            else if (state.decodeSource === 'software') presentDecodedCandidate(normalizedValue, 'camera');
             else await admitByQr(normalizedValue, { source: 'camera' });
 
             if (shouldKeepScannerOpen() && state.stream) {
@@ -2010,15 +2040,17 @@
             return;
           }
         } catch (err) {
-          console.warn(err);
+          ids('scannerDecoderStatus').textContent = err.message;
           state.isProcessingScan = false;
         }
+        if (generation !== state.scanGeneration || !state.scanning) return;
         state.scanLoopId = requestAnimationFrame(loop);
       };
       state.scanLoopId = requestAnimationFrame(loop);
     }
 
-    function stopScanning() {
+    function stopScanning({ invalidateDecode = true } = {}) {
+      if (invalidateDecode) state.scanGeneration += 1;
       state.scanning = false;
       resetScanDeduping();
       if (state.scanLoopId) {
@@ -2034,6 +2066,16 @@
 
     async function initializeCodeDetector() {
       state.detector = null;
+      if (isLiveProtocol()) {
+        if (!state.liveDecoder) {
+          if (!window.StudentQrTicketDecoder) throw new Error('Live decoder unavailable. Use manual ticket entry.');
+          state.liveDecoder = window.StudentQrTicketDecoder.create({ reader: window.ZXingWASM,
+            wasmUrl: new URL('assets/vendor/zxing-wasm-3.1.5/zxing_reader.wasm', window.location.href).href });
+        }
+        await state.liveDecoder.initialize();
+        ids('scannerDecoderStatus').textContent = 'Automatic check-in. Keep only one complete ticket barcode in the camera view.';
+        return;
+      }
       let formats = [];
       if (typeof window.BarcodeDetector === 'function') {
         try {
@@ -2134,6 +2176,12 @@
       }
       if (Date.now() < state.nextDecodeAt) return '';
       state.nextDecodeAt = Date.now() + 150;
+      if (isLiveProtocol()) {
+        const canvas = ensureScanCanvas();
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        state.scanContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+        return decodeLiveTicket(state.scanContext.getImageData(0, 0, canvas.width, canvas.height));
+      }
 
       if (state.detector) {
         let codes;
@@ -2165,6 +2213,7 @@
 
     async function decodeQrFromImageFile(file) {
       if (!file) return '';
+      if (isLiveProtocol()) return decodeLiveTicket(file);
       if (typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
         throw new Error('Photo scanning decoder unavailable. Reload the app or enter the ticket manually.');
       }
@@ -2193,8 +2242,10 @@
       if (state.admissionInFlight || state.isProcessingScan) return;
       cancelDecodedCandidate();
       setScreenAlert('idle');
+      const generation = state.scanGeneration;
       try {
         const rawValue = await decodeQrFromImageFile(file);
+        if (generation !== state.scanGeneration || document.hidden) return;
         if (!rawValue) {
           setManualQrValue('');
           setScreenAlert('error');
@@ -2204,7 +2255,8 @@
           toast('No ticket barcode or QR code was found. Use a clear photo of one ticket, with the entire barcode visible.', false);
           return;
         }
-        presentDecodedCandidate(rawValue.trim(), 'photo');
+        if (isLiveProtocol()) await processLiveDecodedTicket(rawValue, 'photo', generation);
+        else presentDecodedCandidate(rawValue.trim(), 'photo');
       } catch (err) {
         console.warn(err);
         setManualQrValue('');
@@ -2312,6 +2364,7 @@
         toast('Saved setup cleared.');
       });
       document.addEventListener('visibilitychange', () => {
+        if (document.hidden && isLiveProtocol()) stopScanning();
         if (!document.hidden) triggerRosterSync();
       });
       window.addEventListener('focus', triggerRosterSync);

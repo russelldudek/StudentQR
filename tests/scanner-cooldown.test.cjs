@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const functions = [
+  html.slice(html.indexOf('    function isLiveProtocol()'), html.indexOf('    async function processLiveDecodedTicket')),
   html.slice(html.indexOf('    function shouldKeepScannerOpen()'), html.indexOf('    function isLegacyBlankStatusAdmitError')),
   html.slice(html.indexOf('    async function startScanning()'), html.indexOf('    function ensureScanCanvas()')),
 ].join('\n');
@@ -21,12 +22,13 @@ function scanner({ continuous = true, processingMs = 0, qr = '001' } = {}) {
   const admissions = [];
   const video = { setAttribute() {}, async play() {}, srcObject: null };
   const stream = { getTracks: () => [{ stop: () => stopped++ }] };
-  const state = { scanning: false, isProcessingScan: false, scanLoopId: null };
+  const state = { scanning: false, isProcessingScan: false, scanLoopId: null, scanGeneration: 0 };
   const context = vm.createContext({
     state,
     console,
     Date: { now: () => now },
     window: { jsQR() {} },
+    document: { hidden: false },
     navigator: { mediaDevices: { getUserMedia: async () => stream } },
     ids: id => id === 'video' ? video : { checked: continuous },
     setScreenAlert() {},
