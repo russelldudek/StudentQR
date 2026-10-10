@@ -92,8 +92,11 @@ with Anyone access. Google confirmed version 1 at the endpoint now pinned in the
 trusted registry. The editor initially returned `/dev` during owner initialization;
 the guard refused it before issuing keys. An owner-only Script Property now pins
 the verified `/exec` URL, with malformed and changed endpoints refused. Public
-deployment version 1 retains the accepted 319 candidate; only editor-only
-initialization/recovery changed in the 323 candidate.
+deployment version 1 initially retained the accepted 319 candidate; only
+editor-only initialization/recovery changed in the 323 candidate. Version 2 now
+deploys the accepted 323 source with the same URL, Eve execution account and
+Anyone access. All three modules were read back byte-exact after editor reload
+before that update; private links, event, mode and attendance were retained.
 
 Initialization completed with a ready mirror binding, event
 `d1221560-4dfb-4876-b9b8-5f9c99743ece`, distinct private admin/helper credentials
@@ -118,9 +121,33 @@ blank student name, contradictory guest declaration and control characters,
 without returning raw identity values. `git diff --check` passes. Browser checks additionally confirmed visible
 quarantine notices and rejection in both modes, separate guest admission and
 same-timestamp duplicate rejection across tabs. Physical iPhone validation and
-hosted-role proof remain outstanding. The immutable 319 candidate was accepted
+physical cross-device admission proof remain outstanding. The immutable 319 candidate was accepted
 after independent 319-test and 22-probe review. A separate bounded native review
 of the new owner URL resolver found no actionable findings and independently
 passed all 28 mirror tests. Its four new regressions were observed RED then GREEN.
 The singleton trusted-registry endpoint was checked against the actual deployment
-dialog. These scopes are distinct from any further root-level delta acceptance.
+dialog. Root subsequently accepted the exact immutable 323 candidate after
+independent 323-test and nine-probe review, with no unresolved findings.
+
+## Hosted Mirror Gate
+
+The approved fast-forward publication reached GitHub Pages main at `6667175`.
+The provider reports that build complete. Served index.html, the trusted registry
+and local ZXing bundle returned HTTP 200 and matched local accepted bytes exactly.
+Fresh hosted links automatically loaded the same 346-person mirror: helpers land
+on Scanner without Setup; Eve lands on Dashboard with admin Setup available.
+The helper access QR rendered in Eve's preloaded settings without another setup.
+Actual read-only student/guest lookups, bidirectional guest display and quarantined
+ticket rejection were checked in the hosted UI. The stale guest card cleared on
+rejection. Live API checks confirmed separate roles, helper mode changes refused,
+read-only mode on, 144 blocked identifiers and zero admitted records. Direct
+Google reads confirmed the ledger's inspected range remained headers-only and
+the workbook remained unshared with only its school-account owner.
+
+These are desktop hosted/manual-value checks, not physical iPhone camera proof.
+Eve and Russ must still test camera permissions, printed barcodes, access QR,
+rotation/lighting, duplicate and simultaneous mirror-practice admissions,
+cross-device refresh, background/offline behavior and uncertain writes. Test mode
+on is read-only; duplicate admission practice requires intentionally turning it
+off inside the isolated mirror, then restoring it on without clearing attendance.
+Production source and attendance remain unchanged and excluded.
