@@ -10,6 +10,8 @@ Russ approved modifying the backend so Eve's private admin link and every
 helper's access QR use one centrally configured Homecoming roster. Eve must not
 configure the app on her phone. Helpers open Scanner without Setup or sign-in.
 Student tickets use Code 128 barcodes; the QR on Eve's phone is app access only.
+Eve must see whether a student is bringing a guest, the guest's name/ticket,
+and the associated student's name/ticket when viewing or scanning a guest.
 
 Use the existing Ticket Checklist as the live source, leave intake unchanged,
 and record admission in a separate Check-ins tab in the same spreadsheet.
@@ -79,16 +81,33 @@ publish a partial roster. The strict projection's existing refusal semantics
 remain unchanged. The operator must correct invalid source data separately.
 
 Each student and declared guest with a complete name/ticket is a distinct
-scan subject. Return only the name, ticket, person type, student guest flag, and
-attendance needed by the door team. Do not expose school emails, uploaded IDs,
+scan subject. Return only the name, ticket, person type, student guest flag,
+linked student/guest name and ticket, and attendance needed by the door team.
+Do not expose school emails, uploaded IDs,
 grade, form-submission metadata, or source Student IDs to helpers. Internal
 student identity is retained server-side for reconciliation.
 
 Project results into the existing frontend response contract: `First Name`
 contains the full name, `Last Name` is empty, `QR_ID` is the exact ticket,
 `Status` and `Admitted At` come only from the ledger, and `Bringing Guest` is
-Yes for a student with a guest. Add `personType` and a guest-ticket reference
-so the UI can distinguish a guest from the student's bringing-guest flag.
+Yes for a student with a guest. Add `personType` and a two-way relationship
+containing `linkedPersonType`, `linkedName`, `linkedTicketId`, `linkedStatus`,
+and `linkedAdmittedAt`. For a student, the link identifies their guest; for a
+guest, it identifies their associated student. A student without a guest has
+no relationship. Guest subjects are not themselves marked Bringing Guest.
+
+Build both directions server-side from the strict projection's shared internal
+`sourceStudentId` and person type. Never infer relationships from matching names,
+ticket suffixes, scan order, or adjacent frontend rows. Preserve exact ticket
+strings in both directions. The linked status and timestamp are read from the
+same validated ledger snapshot as the scanned person's attendance. A missing,
+contradictory, or ambiguous required association blocks the affected source
+projection rather than returning an unassociated guest.
+
+The relation is for human identification and coordination, not a new admission
+rule: an associated student's check-in status does not automatically admit or
+block their guest. Do not require simultaneous arrival or infer guest approval
+from the host's attendance. Those policies require separate human direction.
 Scanning a student does not check in their guest; the guest's ticket is separate.
 Guest form/ID/email fields do not constitute automatic approval or admission
 rules. Door-team human verification remains explicit.
@@ -137,7 +156,23 @@ and fail-closed behavior when global configuration/roster refresh fails.
 
 Preserve private admin and helper link separation and fresh-device autoload.
 Show Student/Guest badges and attendee counts rather than labeling all subjects
-students. Disable random QR assignment for Homecoming in the UI and refuse it
+students. Eve's dashboard and helpers' roster/scan results show the relationship
+explicitly, not just a generic Guest badge:
+
+- Student: Bringing guest Yes/No; if Yes, show guest name, exact guest ticket,
+  and guest check-in status/time separately from the student's own attendance.
+- Guest: clearly label Guest and Associated student; show the student's name,
+  exact student ticket, and their independent check-in status/time.
+- Scanning either ticket returns both the scanned subject and their linked
+  person's current details, with no write to the linked person's attendance.
+- In test mode, display the same relationship using the refreshed read-only
+  roster. Clear prior relationship details on errors or unlinked student scans.
+- Student-with-guest scan results keep the yellow guest reminder. Guest-ticket
+  results also show a yellow Guest/Associated student reminder, while duplicate,
+  unknown, and unconfirmed scans remain red. The scanned person's own verified
+  admission status/time remain prominent; linked attendance is informational.
+
+Disable random QR assignment for Homecoming in the UI and refuse it
 server-side. Preserve Code 128/QR decoding and the one-second continuous-scan
 cooldown. Helpers' visible dashboards refresh the shared roster every eight
 seconds; this is polling, not instantaneous push.
@@ -150,7 +185,11 @@ refusal suites. Add integration tests covering raw identity preservation,
 student/guest independence, schema failures, ledger tampering/identity drift,
 simultaneous duplicate scans, Pending records, lost responses, injected write/
 flush/readback failures, unauthorized roles, stale revisions, global mode races,
-idempotent owner initialization, and zero intake writes on every path.
+idempotent owner initialization, and zero intake writes on every path. Verify
+bidirectional association with duplicate names, reordered source rows, exact
+leading-zero ticket values, independent student/guest attendance, and source
+identity drift. Guest responses must identify the correct associated student
+without exposing their internal Student ID or eligibility metadata.
 
 A synthetic browser preview must demonstrate distinct Eve/helper links, no
 helper Setup, automatic roster load, guest presentation, cross-device status
