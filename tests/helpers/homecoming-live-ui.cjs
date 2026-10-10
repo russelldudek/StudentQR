@@ -15,7 +15,7 @@ function liveUi(options={}){
     navigator:{mediaDevices:{getUserMedia:async()=>({getTracks:()=>[{stop(){}}]})}},
     localStorage:{getItem:k=>storage.get(k)||null,setItem(k,v){if(options.storageFail)throw Error('Storage unavailable');storage.set(k,v);},removeItem:k=>storage.delete(k)},
     setTimeout(){},clearTimeout(){},setInterval(fn){listeners.interval=fn;},clearInterval(){},requestAnimationFrame(fn){frames.push(fn);return frames.length;},cancelAnimationFrame(){},
-    fetch:async(url,init={})=>{if(!init.body)return{ok:true,json:async()=>({version:1,endpoints:[endpoint]})};if(url!==endpoint)throw Error('REAL NETWORK REFUSED');const body=JSON.parse(init.body);calls.push(body);const response=backend.request(body);if(options.failResponse?.(body))throw Error('Lost response');return{ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(response)};}
+    fetch:async(url,init={})=>{if(!init.body)return{ok:true,json:async()=>({version:1,endpoints:[endpoint]})};if(url!==endpoint)throw Error('REAL NETWORK REFUSED');const body=JSON.parse(init.body);calls.push(body);const response=backend.rawRequest(body);if(options.failResponse?.(body))throw Error('Lost response');return{ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(response)};}
   });
   for(const name of ['ticket-decoder','homecoming-live']){const p='assets/'+name+'.js';if(fs.existsSync(p))vm.runInContext(fs.readFileSync(p,'utf8'),ctx);}
   const html=fs.readFileSync('index.html','utf8'),inline=html.slice(html.indexOf('<script>')+8,html.lastIndexOf('\n    loadSavedConfig();'));vm.runInContext(inline,ctx);

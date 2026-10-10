@@ -20,12 +20,14 @@
         renderRelationship(row||null); renderResult({kind:response.alreadyAdmitted?'duplicate':response.testMode?'test':kind,row});
       }
       async function mutate(action,payload) {
-        const record = {action,payload}; put('operation:'+payload.operationId,record); put('pending',payload.operationId);
+        const record = {action,payload};
+        if (action !== 'reviewOperation' || !get('operation:'+payload.operationId)) put('operation:'+payload.operationId,record);
+        put('pending',payload.operationId);
         el('reconcileLastOperation').disabled = false;
         let response;
         try { response = await request(action,payload); current(); }
         catch (err) { message('Operation not confirmed. Reconcile this operation before retrying.'); throw err; }
-        if (response.state === 'Committed' || response.alreadyAdmitted || response.testMode) {
+        if (['Committed','Cancelled'].includes(response.state) || response.alreadyAdmitted || response.testMode) {
           if (get('pending') === payload.operationId) storage.removeItem(namespace+'pending');
           el('reconcileLastOperation').disabled = !get('pending');
         }
@@ -40,6 +42,12 @@
           // Current server truth may now be reset; an old Committed operation is not a new admission.
           if (response.currentRow) showResult(response,response.currentRow.Status==='Admitted'?'admitted':'undo');
           message('Original operation reconciled against current attendance.');
+        } else if (response.state === 'Cancelled') {
+          if (get('pending') === operationId) storage.removeItem(namespace+'pending');
+          if (get('latest')?.receipt?.operationId === operationId) storage.removeItem(namespace+'latest');
+          renderRelationship(null); renderResult({kind:'error',ticket:saved.payload.qrValue||'',detail:'Operation Cancelled by Eve. No check-in was committed by this operation.'});
+          el('reconcileLastOperation').disabled = !get('pending');
+          message('Cancellation verified. You can scan again.'); await refreshRoster();
         } else message(response.state==='NotFound'?'No verified commit found yet. Keep the original operation ID; ask Eve before retrying.':'Operation '+response.state+'. Eve review required.');
         await reconcileLatest(); return response;
       }
@@ -130,10 +138,11 @@
       async function confirmReset() {
         admin(); if (busy || !resetPreview) return; busy = true; const p = resetPreview; cancelReset();
         try {
-          current(); if (get('pending')) throw Error('Reconcile previous operation first.');
+          current(); if (get('pending') && !(p.scope === 'operation' && get('pending') === p.ticketId)) throw Error('Reconcile previous operation first.');
           const response = p.scope === 'operation' ? await mutate('reviewOperation',{operationId:p.ticketId,decision:p.decision,intentHash:p.intentHash,confirmationToken:p.confirmationToken}) : await mutate(p.scope==='all'?'resetAll':'resetTicket',{scope:p.scope,...(p.ticketId?{ticketId:p.ticketId}:{}),confirmationToken:p.confirmationToken,expectedAttendanceRevision:p.attendanceRevision,operationId:crypto.randomUUID(),...(p.reviewedAssignmentHash?{reviewedAssignmentHash:p.reviewedAssignmentHash}:{})});
           if (!['Committed','Cancelled'].includes(response.state)) throw Error('Reset/review not verified.');
           if (response.row || response.currentRow) showResult(response,'undo');
+          else if (response.state === 'Cancelled') { renderRelationship(null); renderResult({kind:'error',detail:'Operation Cancelled by Eve. No attendance change committed by this operation.'}); }
           message('Reset/review verified. History retained.'); await refreshRoster(); await loadAttention({discardDraft:false}); return response;
         } catch (err) { message(err.message); throw err; } finally { busy = false; await reconcileLatest(); }
       }

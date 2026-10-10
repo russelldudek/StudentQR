@@ -1,5 +1,26 @@
 # Homecoming Implementation Evidence
 
+## Live Candidate Checkpoint - 2026-10-10
+
+The separate version-2 live implementation is local, not activated. It adds
+Eve's correction layer, automatic single-ticket check-in, latest-device undo,
+and audited Eve-only single/all resets. Original intake and accepted mirror
+remain unchanged. See `docs/homecoming-live-runbook.md` for operation/release gates.
+
+Fresh independent review rejected candidate 09cd4cc with eight reproduced
+defects. Regression repairs now pass 418/418 tests, zero skipped, including
+exact browser request bodies, Pending reset safety, orphan journal refusal,
+terminal cancellation recovery and two distinct Code128 tickets. A new freeze
+and independent repair review are required before release.
+
+Native loopback practice checks verified correction propagation, automatic
+photo admission, guest/host display, duplicate rejection, helper undo and
+Eve's reset warnings/Cancel/confirmation. A separate school-owned practice
+project is staged but not deployed/executed. The repaired modules have not yet
+been saved there. New provider/OAuth access, practice physical-phone checks,
+production binding/role and hosted-byte parity remain unverified. No new
+production URL, private key, activation or real attendance mutation is claimed.
+
 ## Local Source
 
 Implemented on `codex/homecoming-mirror-backend` in the original project folder.

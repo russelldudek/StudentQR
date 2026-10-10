@@ -7,6 +7,12 @@ function liveCorrectionFields_(fields) {
 function liveStudentTicket_(value) { return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 999 ? ('00'+value).slice(-3) : value; }
 function liveTicketCandidates_(value) {
   var v = liveStudentTicket_(value), result = [];
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // An invalid numeric assignment still reserves its literal printed-code candidates.
+    result.push(String(value));
+    if (Number.isInteger(value) && value >= 0 && value <= 999) result.push(('00'+value).slice(-3));
+    v = String(v);
+  }
   if (typeof v === 'string' && v) {
     if (/^[A-Za-z0-9_-]+$/.test(v)) result.push(v);
     if (v.trim() !== v && /^[A-Za-z0-9_-]+$/.test(v.trim())) result.push(v.trim());

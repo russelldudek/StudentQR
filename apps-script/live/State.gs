@@ -15,6 +15,32 @@ function liveGridRows_(grid, headers) {
     return row;
   });
 }
+function liveValidateIntentShape_(intent,eventId) {
+  var kind = intent.kind, a = intent.admissions, c = intent.corrections, r = intent.revoke, t = intent.tickets;
+  if (new Set(t).size !== t.length || new Set(r).size !== r.length || r.some(function(id) { return !liveId_(id); })) liveError_('Invalid operation intent identities.');
+  var isAdmit = kind === 'Admit', isCorrect = kind === 'Correct', isReset = kind === 'ResetTicket' || kind === 'ResetAll', isUndo = kind === 'Undo';
+  if ((isAdmit ? a.length !== 1 || t.length !== 1 : a.length !== 0) ||
+      (isCorrect ? c.length < 1 || c.length > 100 : c.length !== 0) ||
+      (isReset || isUndo ? !r.length || t.length !== r.length : r.length !== 0) ||
+      ((isUndo || kind === 'ResetTicket') && (t.length !== 1 || r.length !== 1)) ||
+      (['Mode','Rename'].indexOf(kind) >= 0 && t.length !== 0) ||
+      (kind === 'Mode' ? typeof intent.testMode !== 'boolean' : intent.testMode !== undefined) ||
+      (kind === 'Rename' ? typeof intent.eventName !== 'string' || !intent.eventName.trim() || intent.eventName.length > 120 || /[\u0000-\u001f]/.test(intent.eventName) : intent.eventName !== undefined) ||
+      (intent.reviewedAssignmentHash !== undefined && (kind !== 'ResetTicket' || !liveHex_(intent.reviewedAssignmentHash)))) liveError_('Invalid operation kind/intent shape.');
+  a.forEach(function(p) {
+    if (!Array.isArray(p) || p.length !== 10 || p.some(function(v) { return typeof v !== 'string'; }) ||
+        !liveId_(p[0]) || p[1] !== intent.operationId || p[2] !== eventId || ['Student','Guest'].indexOf(p[3]) < 0 ||
+        !liveHex_(p[6]) || p[7] !== intent.actorHash || !liveHex_(p[8]) || !liveTimestamp_(p[9]) || liveParseJson_(p[4]) !== t[0]) liveError_('Invalid admission intent payload.');
+    combinedLiteralIdentity_(liveParseJson_(p[4]),'Ticket'); combinedLiteralIdentity_(liveParseJson_(p[5]),'Student ID');
+  });
+  var ids = new Set(), sourceRows = new Set();
+  c.forEach(function(p) {
+    if (!Array.isArray(p) || p.length !== 6 || p.some(function(v) { return typeof v !== 'string'; }) ||
+        !liveId_(p[0]) || ids.has(p[0]) || p[1] !== intent.operationId || !/^[1-9]\d*$/.test(p[2]) || Number(p[2]) < 6 || !Number.isSafeInteger(Number(p[2])) || sourceRows.has(p[2]) ||
+        !liveHex_(p[3]) || (p[4] && !liveId_(p[4]))) liveError_('Invalid correction intent payload.');
+    ids.add(p[0]); sourceRows.add(p[2]); liveCorrectionFields_(liveParseJson_(p[5]));
+  });
+}
 function parseLiveState_(grids, eventId) {
   var admissions = liveGridRows_(grids.attendance,LIVE_STATE_HEADERS.attendance), corrections = liveGridRows_(grids.corrections,LIVE_STATE_HEADERS.corrections);
   var audit = liveGridRows_(grids.audit,LIVE_STATE_HEADERS.audit), seen = Object.create(null), payloadIds = Object.create(null);
@@ -34,10 +60,11 @@ function parseLiveState_(grids, eventId) {
         !liveHex_(r[2]) || !liveHex_(r[4]) || hashLive_(r[3]) !== r[4] || !liveTimestamp_(r[5]) || ['Pending','Committed','Cancelled'].indexOf(r[6]) < 0) liveError_('Corrupt operation journal.');
     seen[r[0]] = true;
     var intent = liveParseJson_(r[3]);
-    liveExactKeys_(intent,['operationId','kind','actorHash','requestHash','tickets','admissions','corrections','revoke','testMode','eventName']);
+    liveExactKeys_(intent,['operationId','kind','actorHash','requestHash','tickets','admissions','corrections','revoke','testMode','eventName','reviewedAssignmentHash']);
     if (intent.operationId !== r[0] || intent.kind !== r[1] || intent.actorHash !== r[2] || !liveHex_(intent.requestHash) ||
         !Array.isArray(intent.tickets) || intent.tickets.some(function(t) { return typeof t !== 'string' || !t; }) ||
         !Array.isArray(intent.admissions) || !Array.isArray(intent.corrections) || !Array.isArray(intent.revoke)) liveError_('Invalid operation intent.');
+    liveValidateIntentShape_(intent,eventId);
     var op = {operationId:r[0],kind:r[1],actorHash:r[2],intent:intent,intentHash:r[4],state:r[6],row:index+2,createdAt:r[5]};
     state.operations.push(op);
     if (op.state === 'Pending') { state.pending.push(op); return; }
@@ -63,6 +90,12 @@ function parseLiveState_(grids, eventId) {
     if (op.kind === 'Mode') { if (typeof intent.testMode !== 'boolean') liveError_('Invalid mode.'); state.testMode = intent.testMode; }
     if (op.kind === 'Rename') { if (typeof intent.eventName !== 'string' || !intent.eventName.trim()) liveError_('Invalid event name.'); state.eventName = intent.eventName; }
     if (['Correct','Mode','Rename'].indexOf(op.kind) >= 0) state.sequence = index+1;
+  });
+  [['admissions',admissions],['corrections',corrections]].forEach(function(pair) {
+    pair[1].forEach(function(payload) {
+      var op = state.operations.find(function(o) { return o.operationId === payload[1]; });
+      if (!op || !op.intent[pair[0]].some(function(p) { return liveJson_(p) === liveJson_(payload); })) liveError_('Orphan payload / missing or changed journal evidence.');
+    });
   });
   state.attendanceRevision = hashLive_(liveJson_(grids)); return state;
 }

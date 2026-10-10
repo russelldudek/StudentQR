@@ -832,7 +832,8 @@
       await assertTrustedBackend(access.apiUrl);
       const res = await fetch(access.apiUrl, { method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ revision: access.revision, ...payload, action, eventId: access.eventId, token: access.token }) });
+        // A fresh private link has no revision yet; getEvent authenticates and returns the current one.
+        body: JSON.stringify({ revision: action === 'getEvent' && access.revision === undefined ? 1 : access.revision, ...payload, action, eventId: access.eventId, token: access.token }) });
       const data = await parseApiResponse(res);
       if (data?.error) throw new Error(String(data.error));
       return data;
@@ -2119,6 +2120,12 @@
           }
         } catch (err) {
           ids('scannerDecoderStatus').textContent = err.message;
+          if (isLiveProtocol() && generation === state.scanGeneration && state.scanning && !document.hidden) {
+            setScreenAlert('error');
+            renderScannerRelationship(null);
+            ids('manualQr').value = '';
+            renderScanResultCard({stateClass:'scan-state-blocked',kicker:'Cannot Read Ticket',name:'Scan one ticket',detail:err.message,status:'No check-in requested',qrValue:'',admittedAt:''});
+          }
           state.isProcessingScan = false;
         }
         if (generation !== state.scanGeneration || !state.scanning) return;

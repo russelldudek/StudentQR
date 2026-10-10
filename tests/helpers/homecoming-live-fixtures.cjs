@@ -61,9 +61,10 @@ function liveFixture(options = {}) {
     const config={apiVersion:2,rosterMode:'homecoming-2026',environment:'live-test',sheetUrl:'https://docs.google.com/spreadsheets/d/live-test/edit',apiUrl:binding.apiUrl,sheetName:'Ticket Checklist',firstNameCol:'First Name',lastNameCol:'Last Name',qrCol:'QR_ID',statusCol:'Status',admittedAtCol:'Admitted At',guestCol:'Bringing Guest',eventName:'Practice - Not Real Attendance',admittedValue:'Admitted',timeZone:'America/New_York',testMode};
     properties.set('studentQrLiveDeploymentUrl',binding.apiUrl);properties.set('studentQrLiveBinding',JSON.stringify(binding));properties.set('studentQrLiveEvent',JSON.stringify({version:2,eventId:'live-event',authRevision:1,adminHash:sha(admin),helperHash:sha(helper),helperToken:helper,config}));trace.length=0;
   }
-  function request(body={}){ctx.req={postData:{contents:JSON.stringify({eventId:'live-event',token:helper,revision:1,...body})}};return typeof ctx.doPost==='function'?JSON.parse(run('doPost(req).value')):{error:'Live routes unavailable'};}
+  function rawRequest(body){ctx.req={postData:{contents:JSON.stringify(body)}};return typeof ctx.doPost==='function'?JSON.parse(run('doPost(req).value')):{error:'Live routes unavailable'};}
+  function request(body={}){return rawRequest({eventId:'live-event',token:helper,revision:1,...body});}
   function list(){return request({action:'list'});}
   function admit(ticket,extra={}){const l=list(),row=l.rows?.find(r=>r.QR_ID===ticket);return request({action:'admit',qrValue:ticket,expectedAssignmentHash:row?.assignmentHash,expectedRosterRevision:l.rosterRevision,operationId:crypto.randomUUID(),actorSecret:actor,undoSecret:undo,...extra});}
-  return {ctx,run,book,books,properties,trace,fault,ready,request,list,admit,writes:()=>trace.filter(t=>t[0]==='write')};
+  return {ctx,run,book,books,properties,trace,fault,ready,request,rawRequest,list,admit,writes:()=>trace.filter(t=>t[0]==='write')};
 }
 module.exports={liveFixture,admin,helper,actor,undo,sha,source,headers};

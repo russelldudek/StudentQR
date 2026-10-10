@@ -11,7 +11,7 @@ const endpoint='https://script.google.com/macros/s/FICTIONAL_LIVE/exec',root=pat
 const assets=new Set(['assets/zxing-0.21.3.min.js','assets/homecoming-live.js','assets/ticket-decoder.js','assets/vendor/jsqr-1.4.0.js','assets/vendor/qrcodejs-1.0.0.js','assets/vendor/zxing-wasm-3.1.5/reader.js','assets/vendor/zxing-wasm-3.1.5/zxing_reader.wasm']);
 const server=http.createServer((req,res)=>{
  const url=new URL(req.url,'http://127.0.0.1:3895');
- if(url.pathname==='/api'&&req.method==='POST'){let body='';req.on('data',c=>{body+=c;if(body.length>200000)req.destroy();});req.on('end',()=>{try{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(f.request(JSON.parse(body))));}catch(e){res.writeHead(400);res.end(JSON.stringify({error:e.message}));}});return;}
+ if(url.pathname==='/api'&&req.method==='POST'){let body='';req.on('data',c=>{body+=c;if(body.length>200000)req.destroy();});req.on('end',()=>{try{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(f.rawRequest(JSON.parse(body))));}catch(e){res.writeHead(400);res.end(JSON.stringify({error:e.message}));}});return;}
  if(req.method!=='GET'){res.writeHead(405);res.end();return;}
  if(url.pathname==='/assets/trusted-backends.json'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({version:1,endpoints:[endpoint]}));return;}
  if(url.pathname==='/preview-harness.js'){res.setHeader('Content-Type','application/javascript');res.end(`const localFetch=window.fetch.bind(window);window.fetch=(url,init)=>{if(url===${JSON.stringify(endpoint)})return localFetch('/api',init);const target=new URL(url,location.href);if(target.origin!==location.origin)throw Error('EXTERNAL NETWORK REFUSED');return localFetch(url,init);};`);return;}

@@ -153,6 +153,16 @@ function liveAttendanceNeedsReview_(context) {
   return context.state.active.filter(function(a) { return !context.roster.subjects.some(function(s) { return s.ticketId === a.ticketId && s.assignmentHash === a.assignmentHash; }); });
 }
 function liveConfirmation_(context,preview) {
+  var props = PropertiesService.getScriptProperties(), prefix = 'studentQrLiveConfirmation:', retained = [];
+  var values = props.getProperties();
+  Object.keys(values).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(key) {
+    var p; try { p = JSON.parse(values[key]); } catch (err) { p = null; }
+    if (!p || !Number.isSafeInteger(p.expiresAt) || p.expiresAt < Date.now() || p.adminHash !== context.event.adminHash || p.eventId !== context.event.eventId || p.rosterRevision !== context.rosterRevision || p.attendanceRevision !== context.attendanceRevision) props.deleteProperty(key);
+    else retained.push({key:key,expiresAt:p.expiresAt});
+  });
+  // Keep at most eight current warnings, including this one, within finite property storage.
+  retained.sort(function(a,b) { return a.expiresAt-b.expiresAt; });
+  retained.slice(0,Math.max(0,retained.length-7)).forEach(function(p) { props.deleteProperty(p.key); });
   var token = hashLive_(Utilities.getUuid()+Utilities.getUuid()+Utilities.getUuid()), key = 'studentQrLiveConfirmation:'+hashLive_(token);
   var stored = Object.assign({},preview,{eventId:context.event.eventId,adminHash:context.event.adminHash});
   PropertiesService.getScriptProperties().setProperty(key,liveJson_(stored));
@@ -205,6 +215,7 @@ function resetLiveTickets_(context,request) {
   if (!Array.isArray(ids) || !ids.length || ids.some(function(id) { return !context.state.active.some(function(a) { return a.admissionId === id; }); })) liveError_('No confirmed active admissions to reset.');
   var tickets = context.state.active.filter(function(a) { return ids.indexOf(a.admissionId) >= 0; }).map(function(a) { return a.ticketId; });
   var intent = liveIntent_(context,request,scope === 'all'?'ResetAll':'ResetTicket',tickets); intent.revoke = ids.slice();
+  if (preview.reviewedAssignmentHash) intent.reviewedAssignmentHash = preview.reviewedAssignmentHash;
   var finalContext = commitLiveOperation_(context,intent), result = liveOperationResult_(finalContext,finalContext.state.operations.find(function(o) { return o.operationId === request.operationId; }));
   if (scope === 'ticket') result.row = result.currentRow; return result;
 }
@@ -226,6 +237,15 @@ function reviewLiveOperation_(context,request) {
       var cleanState = Object.assign({},context.state,{pending:[]}), clean = Object.assign({},context,{state:cleanState,roster:buildLiveRoster_(context.source,cleanState)});
       var edits = op.intent.corrections.map(function(p) { var row = clean.roster.records.find(function(r) { return r.sourceRow === Number(p[2]); }); return {recordId:row&&row.recordId,sourceRow:Number(p[2]),baseHash:p[3],correctionVersion:p[4],fields:liveParseJson_(p[5])}; });
       prepareLiveCorrections_(clean,edits);
+    }
+    if (['ResetAll','ResetTicket','Undo'].indexOf(op.kind) >= 0) {
+      var cleanAttendanceState = Object.assign({},context.state,{pending:[]});
+      var cleanAttendance = Object.assign({},context,{state:cleanAttendanceState,roster:buildLiveRoster_(context.source,cleanAttendanceState)});
+      var revoked = context.state.active.filter(function(a) { return op.intent.revoke.indexOf(a.admissionId) >= 0; });
+      if (revoked.length !== op.intent.revoke.length) liveError_('Reset/undo attendance changed; cancel and review.');
+      if (op.kind === 'ResetAll' && (revoked.length !== context.state.active.length || liveAttendanceNeedsReview_(cleanAttendance).length)) liveError_('Reset All assignment/snapshot changed; individual review required.');
+      if (op.kind === 'ResetTicket' && revoked.some(function(a) { var hash = liveCurrentAssignment_(cleanAttendance,a.ticketId); return a.assignmentHash !== hash && op.intent.reviewedAssignmentHash !== hash; })) liveError_('Reset ticket assignment changed; individual review required.');
+      if (op.kind === 'Undo' && (revoked[0].actorHash !== op.actorHash || !liveCanUndo_(cleanAttendance,revoked[0]))) liveError_('Undo is no longer the latest unchanged check-in; cancel and review.');
     }
     // Completion never invents a missing payload; incomplete staging must be cancelled.
   }
