@@ -110,3 +110,44 @@ function homecomingRows_(subjects, attendance) {
       linkedAdmittedAt: linkedRecord ? linkedRecord.timestamp : '' };
   });
 }
+
+function admitHomecomingLocked_(config, binding, qrValue, eventId) {
+  if (typeof qrValue !== 'string' || !qrValue || qrValue.trim() !== qrValue) throw new Error('An exact string ticket is required.');
+  var context = readHomecomingContext_(binding, eventId);
+  var rows = homecomingRows_(context.subjects, context.attendance);
+  var index = context.subjects.findIndex(function(s) { return s.ticketId === qrValue; });
+  if (index < 0) throw new Error('Ticket not found on the Homecoming roster.');
+  var row = rows[index], record = context.attendance.get(qrValue);
+  config.testMode = getGlobalTestMode_(config, config.testMode);
+  if (record && record.status !== 'Admitted') throw new Error(record.status + ': admission uncertain or assignment changed. Owner review required.');
+  if (record) return { row: row, matchedQrValue: qrValue, alreadyAdmitted: true, testMode: config.testMode };
+  if (config.testMode) return { row: row, matchedQrValue: qrValue, testMode: true };
+  var subject = context.subjects[index], links = homecomingLinks_(context.subjects);
+  var timestamp = Utilities.formatDate(new Date(), 'America/New_York', "yyyy-MM-dd'T'HH:mm:ss");
+  var pending = [eventId, subject.personType, JSON.stringify(qrValue), JSON.stringify(subject.sourceStudentId),
+    subjectAssignmentHash_(subject, links.get(qrValue)), 'Pending', timestamp];
+  var ledgerRow = context.ledgerSheet.getLastRow() + 1;
+  function verify(expected) {
+    var range = context.ledgerSheet.getRange(ledgerRow, 1, 1, 7);
+    if (JSON.stringify(range.getValues()[0]) !== JSON.stringify(expected) ||
+        range.getFormulas()[0].some(function(value) { return value !== ''; })) throw new Error('Attendance readback mismatch.');
+  }
+  try {
+    assertHomecomingTarget_(context.book, binding);
+    context.ledgerSheet.getRange(ledgerRow, 1, 1, 7).setNumberFormat('@').setValues([pending]);
+    SpreadsheetApp.flush();
+    verify(pending);
+    assertHomecomingTarget_(context.book, binding);
+    context.ledgerSheet.getRange(ledgerRow, 6).setValue('Admitted');
+    SpreadsheetApp.flush();
+    var final = pending.slice(); final[5] = 'Admitted'; verify(final);
+    // Revalidate the whole ledger before returning a success, never an optimistic row.
+    var latest = readHomecomingContext_(binding, eventId);
+    var result = homecomingRows_(latest.subjects, latest.attendance).find(function(r) { return r.QR_ID === qrValue; });
+    if (!result || result.Status !== 'Admitted' || result['Admitted At'] !== timestamp) throw new Error('Assignment changed during admission.');
+    return { row: result, matchedQrValue: qrValue, testMode: false };
+  } catch (err) {
+    // Do not roll back or remove a reservation: a lost response must not admit twice.
+    throw new Error('Admission uncertain. Owner must inspect the mirror ledger before retrying. ' + err.message);
+  }
+}

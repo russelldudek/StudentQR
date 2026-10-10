@@ -25,6 +25,10 @@ function handleRequest_(e, method) {
     var request = getRequestData_(e, method);
     var action = String(request.action || '').trim().toLowerCase();
     rejectDeclaredIntakeAdapter_(request, e, method);
+    var homecomingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
+    var homecomingBinding = homecomingRaw ? JSON.parse(homecomingRaw) : null;
+    if (homecomingBinding) assertHomecomingBinding_(homecomingBinding, readSharedEvent_());
+    if (homecomingBinding && !readSharedEvent_()) throw new Error('Homecoming is not ready. Owner initialization required.');
     if (action === 'saveevent') return jsonResponse_(saveSharedEvent_(request));
     var legacyConfig = !request.eventId && action !== 'getevent' ? buildConfig_(request) : null;
     var sharedEvent = readSharedEvent_();
@@ -40,6 +44,14 @@ function handleRequest_(e, method) {
       throw new Error('Private dance link not found.');
     }
     var config = sharedEvent ? buildConfig_({ config: sharedEvent.config }) : legacyConfig || buildConfig_(request);
+
+    if (homecomingBinding && action === 'list') {
+      var homecoming = readHomecomingContext_(homecomingBinding, sharedEvent.eventId);
+      var publicRows = homecomingRows_(homecoming.subjects, homecoming.attendance);
+      return jsonResponse_({ rows: publicRows, count: publicRows.length, testMode: config.testMode,
+        sheetName: config.sheetName, environment: 'mirror-test', rosterMode: 'homecoming-2026' });
+    }
+    if (homecomingBinding && action === 'assignqrids') throw new Error('Homecoming ticket IDs are fixed. ID assignment is disabled.');
 
     if (!config.sheetUrl) {
       throw new Error('Missing sheetUrl in request config.');
@@ -62,7 +74,7 @@ function handleRequest_(e, method) {
     }
 
     if (action === 'settestmode') {
-      return jsonResponse_(setTestMode_(config, request.testMode));
+      return jsonResponse_(setTestMode_(config, request.testMode, sharedEvent ? request : null));
     }
 
     if (action === 'admit') {
@@ -135,6 +147,29 @@ function saveSharedEvent_(request) {
   if (!lock.tryLock(10000)) throw new Error('Dance setup is busy. Try again.');
   try {
     var previous = readSharedEvent_();
+    var bindingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
+    var binding = bindingRaw ? JSON.parse(bindingRaw) : null;
+    if (binding) {
+      assertHomecomingBinding_(binding, previous);
+      if (!previous) throw new Error('Homecoming bootstrap is owner-only.');
+      if (authorizeSharedEvent_(previous, request) !== 'admin') throw new Error('Requires the private admin link.');
+      if (request.revision !== previous.revision) throw new Error('Dance setup changed. Reload the admin link.');
+      var candidate = request.config;
+      if (!candidate || typeof candidate.eventName !== 'string' || !candidate.eventName.trim()) throw new Error('Invalid dance name.');
+      Object.keys(previous.config).forEach(function(key) {
+        if (key !== 'eventName' && key !== 'testMode' && JSON.stringify(candidate[key]) !== JSON.stringify(previous.config[key])) {
+          throw new Error('Homecoming source, ledger and ticket mapping are fixed.');
+        }
+      });
+      previous.config.eventName = candidate.eventName.trim();
+      previous.config.testMode = getGlobalTestMode_(previous.config, previous.config.testMode);
+      previous.revision += 1;
+      var boundSerialized = JSON.stringify(previous);
+      var boundProps = PropertiesService.getScriptProperties();
+      boundProps.setProperty('studentQrSharedDance', boundSerialized);
+      if (boundProps.getProperty('studentQrSharedDance') !== boundSerialized) throw new Error('Dance save could not be confirmed.');
+      return sharedEventResponse_(previous, request);
+    }
     if (previous && !request.eventId && request.adminToken && request.helperToken &&
         sharedTokenHash_(request.adminToken) === previous.adminHash && sharedTokenHash_(request.helperToken) === previous.helperHash &&
         JSON.stringify(validateSharedEventConfig_(request.config)) === JSON.stringify(previous.config)) {
@@ -403,6 +438,11 @@ function admitRow_(config, qrValue, eventRequest) {
       authorizeSharedEvent_(latest, eventRequest);
       if (latest.revision !== eventRequest.revision) throw new Error('Dance setup changed. Refresh the roster before scanning.');
       config = buildConfig_({ config: latest.config });
+      var bindingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
+      if (bindingRaw) {
+        var binding = assertHomecomingBinding_(JSON.parse(bindingRaw), latest);
+        return admitHomecomingLocked_(config, binding, qrValue, latest.eventId);
+      }
     }
     config.testMode = getGlobalTestMode_(config, config.testMode);
     return admitRowLocked_(config, qrValue);
@@ -562,14 +602,32 @@ function assignQrIds_(config) {
   };
 }
 
-function setTestMode_(config, value) {
-  var enabled = normalizeBoolean_(value);
-  PropertiesService.getScriptProperties().setProperty(getTestModePropertyKey_(config), enabled ? 'true' : 'false');
-  return {
-    ok: true,
-    testMode: enabled,
-    message: 'Test mode ' + (enabled ? 'enabled' : 'disabled') + ' globally.',
-  };
+function setTestMode_(config, value, eventRequest) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error('Admission or mode change busy. Try again.');
+  try {
+    var latest = null;
+    if (eventRequest) {
+      latest = readSharedEvent_();
+      if (authorizeSharedEvent_(latest, eventRequest) !== 'admin') throw new Error('Requires the private admin link.');
+      if (latest.revision !== eventRequest.revision) throw new Error('Dance setup changed. Refresh before changing mode.');
+      config = buildConfig_({ config: latest.config });
+      var bindingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
+      if (bindingRaw) assertHomecomingBinding_(JSON.parse(bindingRaw), latest);
+    }
+    var enabled = normalizeBoolean_(value), properties = PropertiesService.getScriptProperties();
+    var key = getTestModePropertyKey_(config), stored = enabled ? 'true' : 'false';
+    // Both modes and admissions use this lock. An uncertain update fails closed.
+    properties.setProperty(key, stored);
+    if (latest) {
+      latest.config.testMode = enabled;
+      var serialized = JSON.stringify(latest);
+      properties.setProperty('studentQrSharedDance', serialized);
+      if (properties.getProperty('studentQrSharedDance') !== serialized) throw new Error('Global mode not confirmed.');
+    }
+    if (properties.getProperty(key) !== stored) throw new Error('Global mode not confirmed.');
+    return { ok: true, testMode: enabled, message: 'Test mode ' + (enabled ? 'enabled' : 'disabled') + ' globally.' };
+  } finally { lock.releaseLock(); }
 }
 
 function getSheetContext_(config) {

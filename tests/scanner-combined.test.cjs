@@ -284,7 +284,8 @@ test('no-adapter whitespace-only POST preserves the existing generic route', () 
   const b = backend();
   const result = b.requestEvent('POST', { parameter: { action: 'list' }, postData: { contents: ' \n\t' } });
   assert.match(result.error, /APPLICATION_SERVICE_REFUSED/);
-  assert.deepEqual(b.applicationEffects, ['Session.getScriptTimeZone']);
+  // Owner binding is checked before legacy configuration, not adapter activation.
+  assert.deepEqual(b.applicationEffects, ['PropertiesService.getScriptProperties']);
 });
 test('an explicitly empty query adapter array is malformed rather than generic', () => {
   const b = backend();
