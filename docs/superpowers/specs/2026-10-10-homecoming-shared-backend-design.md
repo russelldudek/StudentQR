@@ -1,8 +1,10 @@
 # Homecoming 2026 Shared Backend
 
-Status: Proposed design, awaiting written-spec approval. No implementation,
-Google project changes, Sheet writes, deployment, or GitHub publication are
-authorized by this document itself.
+Status: Design approved by Russ on 2026-10-10, including bidirectional guest
+links. Implementation-plan review is the next gate. Russ additionally requested
+an isolated mirror-test roster for two-iPhone testing; its provisioning and
+isolation details are specified in the implementation plan. No production
+attendance changes or live activation are authorized by this document itself.
 
 ## Approved Outcome
 
@@ -209,5 +211,7 @@ test mode off. Do not use actual students for write-capable smoke tests.
 
 ## Next Gate
 
-Russ reviews this written design. After approval, prepare the implementation
-plan and obtain its review and execution-method selection before product edits.
+Review the implementation plan at
+`docs/superpowers/plans/2026-10-10-homecoming-shared-backend.md` and select its
+execution method before product edits. The design itself is already approved;
+do not ask Russ to approve it again.
