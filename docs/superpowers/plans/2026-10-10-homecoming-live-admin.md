@@ -220,11 +220,16 @@ that baseline covered no new live behavior.
 
 ## Execution Checkpoint
 
-Tasks 1-6 are implemented locally; Task 7 local preparation/browser checks pass.
-The repaired candidate passes 429/429 tests with zero skipped. Independent
-reviews of 09cd4cc and bfd30d9 rejected their respective candidates; neither
-receipt is acceptance of the repaired candidate. A fresh immutable whole-branch
-review is required before deployment/publication. Task 8 is not complete.
+Tasks 1-6 and Task 7 local preparation/browser checks are complete. The final
+immutable `7d7eeff` candidate passed 434/434 tests with zero skipped and received
+independent acceptance after all reproduced findings were repaired. Task 8's
+authorized production deployment, owner preparation/initialization, private role
+checks, hosted-byte verification, activation and chat/Slack delivery are complete.
+Pages published the approved fast-forward `0763b9d`; authoritative revision 2 is
+LIVE. The real source and mirror were not edited, and no real ticket was admitted
+for testing. 346 usable ticket holders and 233 quarantined source records remain.
+The human explicitly waived additional practice-provider and physical-phone
+acceptance under the urgent release order; neither is claimed as completed proof.
 
 Review rulings extend only the existing recovery/correction contracts:
 `cancelUncommitted` verifies the original action/payload and actor, then either
@@ -237,10 +242,12 @@ whose source row was removed. It requires fresh roster/attendance hashes and
 confirmation, refuses active/Pending attendance and retains all physical history.
 It is not a source edit, automatic rebinding or attendance transfer.
 
-A separate undeployed school-owned practice project and private fictional
-workbook exist. Production source, accepted mirror and published main are
-unchanged. Provider endpoint/roles, physical-phone acceptance, native deployed
-parity, hosted bytes and production activation remain unproved.
+The unused practice project was explicitly repurposed as the distinct production
+project, with its fictional preparation workbook preserved separately. All eight
+production backend modules were saved/reloaded byte-exact before the approved
+version-1 deployment. Private target/roles, served bytes and activation were
+verified; physical phone observations remain an operator field check. See
+`docs/homecoming-implementation-status.md` for the release evidence and limits.
 
 ## Execution Handoff
 

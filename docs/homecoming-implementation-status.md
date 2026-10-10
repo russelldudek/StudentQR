@@ -1,40 +1,45 @@
 # Homecoming Implementation Evidence
 
-## Live Candidate Checkpoint - 2026-10-10
+## Live Release - 2026-10-10
 
-Release update: independent bounded review accepted immutable `7d7eeff` with
+Independent bounded review accepted immutable `7d7eeff` with
 434/434 tests, zero skipped, all 72 tracked hashes verified and no blocking
 findings. The eight backend modules were saved and reloaded byte-exact in the
 distinct school-owned Homecoming 2026 - Live Check-In API project. Human approved
 the actual Anyone-access, school-account-executed live deployment; version 1
 is deployed at the endpoint appended to the trusted registry. Unauthenticated
 GET returns `Private POST required.` Owner preparation completed, creating only
-the three dedicated state headers in the real workbook. Private-link
-initialization and hosted activation remain pending at this publication;
-no real admission test or physical iPhone proof is claimed. Historical
-checkpoints below describe their original gates, not the current candidate.
+the three dedicated state headers in the real workbook. Owner initialization
+completed in read-only mode. Admin/helper event authentication and the exact real
+target were verified; invalid credentials and helper admin/reset actions fail.
+The original workbook still has only its existing owner/writer user permissions,
+with no Anyone/domain permission. Keys are outside Git with parent 0700/file 0600;
+a scan of all 72 tracked files found neither role credential.
 
-The separate version-2 live implementation is local, not activated. It adds
-Eve's correction layer, automatic single-ticket check-in, latest-device undo,
-and audited Eve-only single/all resets. Original intake and accepted mirror
-remain unchanged. See `docs/homecoming-live-runbook.md` for operation/release gates.
+Authorized fast-forward publication reached Pages main at `0763b9d`; its build
+is complete. Served index, live controller, decoder, registry, WASM reader JS/WASM,
+jsQR and access-QR JS all returned HTTP 200 and matched local bytes exactly.
+Fresh hosted private links loaded 346 usable ticket holders, with 233 conflicting
+or incomplete source records quarantined (144 blocked-ticket rows are additionally
+visible). Eve has Setup, corrections and reset controls; helpers land on Scanner
+without Setup. Eve's admin mode change committed at revision 2. Fresh authoritative
+admin/helper reads and the helper scanner confirm LIVE, with zero real admissions,
+zero pending operations and zero attendance-assignment reviews.
 
-Independent reviews rejected 09cd4cc, bfd30d9 and a3ee375 with 8, 5 and 4
-reproduced defects respectively. Their repairs now pass 433/433 tests, zero
-skipped, including read-only undo refusal, changed-ticket double-admission
-prevention, preserved Pending recovery and current scan-card refresh. The final
-repair review and provider/hosted release checks remain required.
+Private admin/helper links were delivered directly in this chat and in Slack DMs
+to Russ and Eve. Keep the admin link private. Source records remain blocked until
+Eve explicitly corrects them; no guessed assignment was published. If initial
+loading reports Busy while other requests hold the lock, reload after a few seconds.
+The urgency deadline slipped during native owner debugger quarantine validation;
+it was not used to bypass independent/access/target/hosted gates.
 
-Native loopback practice checks verified correction propagation, automatic
-photo admission, guest/host display, duplicate rejection, helper undo and
-Eve's reset warnings/Cancel/confirmation. A separate school-owned practice
-project is staged but not deployed. Its fictional-only preparation function
-completed and the private practice workbook was verified; the final repaired
-modules have not yet been saved there. New provider/OAuth access,
-production binding/role and hosted-byte parity remain unverified. No new
-production URL, private key, activation or real attendance mutation is claimed.
-The human now requests release within 15 minutes and accepts Core's tests
-instead of additional physical-phone acceptance; no iPhone proof is inferred.
+Native loopback tests exercised automatic single-ticket admission, guest/host
+display, duplicates, helper undo, corrections and Eve's reset Cancel/confirm.
+Human explicitly accepted those tests instead of new practice-provider/physical
+phone runs. No real admission/undo/reset smoke test or new physical iPhone proof
+is claimed. The fictional preparation workbook and accepted mirror remain separate.
+See `docs/homecoming-live-runbook.md` for operation and reversible read-only pause.
+The remaining sections are historical mirror checkpoints, not the live release.
 
 ## Local Source
 
