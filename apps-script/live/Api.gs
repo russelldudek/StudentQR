@@ -13,7 +13,7 @@ function handleLiveRequest_(e, method) {
       if (typeof dispatchLiveAction_ !== 'function') liveError_('Live handler unavailable; no operation performed.');
       return dispatchLiveAction_(b,ev,currentRole,request);
     }
-    result = LIVE_MUTATIONS.indexOf(request.action) >= 0 ? withLiveLock_(request,request.action,dispatch) : dispatch(binding,event,role);
+    result = withLiveLock_(request,request.action,dispatch);
   } catch (err) { result = {error: String(err && err.message || 'Live request refused.')}; }
   return ContentService.createTextOutput(liveJson_(result)).setMimeType(ContentService.MimeType.JSON);
 }
