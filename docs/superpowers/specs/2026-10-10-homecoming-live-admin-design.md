@@ -2,8 +2,8 @@
 
 Status: The live behavior was approved by Russ on 2026-10-10, with the added
 requirement that Eve fix conflicting/incomplete records in her admin app and
-publish those corrections globally. This written design incorporates that
-requirement and is awaiting written-spec review. It is not deployed source.
+publish those corrections globally. Russ approved this written specification
+and requested its implementation plan on 2026-10-10. It is not deployed source.
 
 ## Intent And Scope
 
@@ -248,7 +248,7 @@ as smoke-test data, and retain a clear production-versus-mirror handoff.
 
 ## Next Gate
 
-Review this written specification, especially the app-only correction layer:
-Eve's published changes control every scanner, but the original intake tab
-remains unchanged. After approval, write the implementation plan and select its
+Review the implementation plan at
+`docs/superpowers/plans/2026-10-10-homecoming-live-admin.md` before product edits.
+The written specification is approved; preserve the previously selected native
 execution method. No production activation is claimed by this document.
