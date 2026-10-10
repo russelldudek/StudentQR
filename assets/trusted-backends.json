@@ -1,6 +1,7 @@
 {
   "version": 1,
   "endpoints": [
-    "https://script.google.com/macros/s/AKfycbzmIl1v5FwYjtzszdo2rGm83ZxBGGs-bjnv9sIdMNmaw_yGBBrv54skQCc4t15rpSHp6A/exec"
+    "https://script.google.com/macros/s/AKfycbzmIl1v5FwYjtzszdo2rGm83ZxBGGs-bjnv9sIdMNmaw_yGBBrv54skQCc4t15rpSHp6A/exec",
+    "https://script.google.com/macros/s/AKfycbxYr_k3Kt-cxfG25-kDcBO3Bks9yLgUwVbxGsuuqMrMn9XL7G2IrvfSsYJ2szHadDLz/exec"
   ]
 }

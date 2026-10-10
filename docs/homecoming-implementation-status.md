@@ -2,6 +2,18 @@
 
 ## Live Candidate Checkpoint - 2026-10-10
 
+Release update: independent bounded review accepted immutable `7d7eeff` with
+434/434 tests, zero skipped, all 72 tracked hashes verified and no blocking
+findings. The eight backend modules were saved and reloaded byte-exact in the
+distinct school-owned Homecoming 2026 - Live Check-In API project. Human approved
+the actual Anyone-access, school-account-executed live deployment; version 1
+is deployed at the endpoint appended to the trusted registry. Unauthenticated
+GET returns `Private POST required.` Owner preparation completed, creating only
+the three dedicated state headers in the real workbook. Private-link
+initialization and hosted activation remain pending at this publication;
+no real admission test or physical iPhone proof is claimed. Historical
+checkpoints below describe their original gates, not the current candidate.
+
 The separate version-2 live implementation is local, not activated. It adds
 Eve's correction layer, automatic single-ticket check-in, latest-device undo,
 and audited Eve-only single/all resets. Original intake and accepted mirror
