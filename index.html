@@ -1724,6 +1724,7 @@
     }
 
     function renderScanResultCard({ stateClass, kicker, name, detail, status, qrValue, admittedAt }) {
+      state.liveController?.invalidateResult?.();
       const target = ids('scanResult');
       target.className = `stat scan-feedback ${stateClass}`;
       target.innerHTML = `

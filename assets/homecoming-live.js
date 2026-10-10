@@ -17,8 +17,8 @@
       function showResult(response,kind) {
         const row = response.row || response.currentRow;
         if (!row && kind !== 'reset') throw Error('Server did not verify the ticket result.');
-        lastResult = row ? {row,kind:response.alreadyAdmitted?'duplicate':response.testMode?'test':kind} : null;
         renderRelationship(row||null); renderResult({kind:response.alreadyAdmitted?'duplicate':response.testMode?'test':kind,row});
+        lastResult = row ? {row,kind:response.alreadyAdmitted?'duplicate':response.testMode?'test':kind} : null;
       }
       function refreshResult() {
         if (!lastResult) return;
@@ -177,7 +177,7 @@
       el('liveAttention').addEventListener('click',event=>{if(event.target.dataset.retire)previewReset('correction',event.target.dataset.retire).catch(err=>message(err.message));});
       el('livePending').addEventListener('click',event=>{const target=event.target;if(target.dataset.review)reviewOperation(target.dataset.review,target.dataset.decision).catch(err=>message(err.message));if(target.dataset.drift)previewReset('ticket',target.dataset.drift,target.dataset.hash).catch(err=>message(err.message));});
       root.addEventListener?.('storage',()=>{el('undoLatestCheckIn').disabled=true;reconcileLatest();});
-      updateUi(); return {submitTicket,undoLatest,loadAttention,publishCorrections,previewReset,confirmReset,cancelReset,reviewOperation,reconcileOperation,reconcileLatest,setMode,rename,updateUi,refreshAttention,refreshResult,
+      updateUi(); return {submitTicket,undoLatest,loadAttention,publishCorrections,previewReset,confirmReset,cancelReset,reviewOperation,reconcileOperation,reconcileLatest,setMode,rename,updateUi,refreshAttention,refreshResult,invalidateResult:()=>{lastResult=null;},
         reconcilePending:()=>reconcileOperation(get('pending'))};
     }
   };

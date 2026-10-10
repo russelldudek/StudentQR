@@ -28,3 +28,10 @@ test('remote reset refresh replaces green card with current not-checked-in truth
   f.backend.request({action:'resetAll',token:admin,scope:'all',confirmationToken:p.confirmationToken,expectedAttendanceRevision:p.attendanceRevision,operationId:'remote-reset-final'});
   await f.run('loadRoster({silent:true})');assert.match(f.el('scanResult').innerHTML,/scan-kicker">Not Checked In/);assert.doesNotMatch(f.el('scanResult').className,/scan-state-success/);
 });
+test('multi-ticket refusal cannot be repainted as the previous green scan by polling',async()=>{
+  const f=liveUi();await f.run('loadEventFromUrl()');await f.run('admitByQr("083")');
+  f.run('document.getElementById("keepScannerOpen").checked=true;initializeCodeDetector=async()=>{};waitForVideoReady=async()=>{};readQrFromVideo=async()=>{throw Error("Multiple tickets visible. Scan one ticket.");};');
+  await f.run('startScanning()');await f.frames.shift()();assert.match(f.el('scanResult').innerHTML,/Cannot Read Ticket/);
+  const n=f.calls.filter(c=>c.action==='admit').length;await f.run('loadRoster({silent:true})');
+  assert.equal(f.calls.filter(c=>c.action==='admit').length,n);assert.match(f.el('scanResult').innerHTML,/Cannot Read Ticket/);assert.match(f.el('scanResult').className,/scan-state-blocked/);
+});
