@@ -27,6 +27,9 @@ function handleRequest_(e, method) {
     rejectDeclaredIntakeAdapter_(request, e, method);
     var homecomingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
     var homecomingBinding = homecomingRaw ? JSON.parse(homecomingRaw) : null;
+    if (typeof HOMECOMING_DEPLOYMENT_KIND_ !== 'undefined' && HOMECOMING_DEPLOYMENT_KIND_ === 'mirror-test' && !homecomingBinding) {
+      throw new Error('Dedicated Homecoming mirror is not ready. Owner initialization required.');
+    }
     if (homecomingBinding) assertHomecomingBinding_(homecomingBinding, readSharedEvent_());
     if (homecomingBinding && !readSharedEvent_()) throw new Error('Homecoming is not ready. Owner initialization required.');
     if (action === 'saveevent') return jsonResponse_(saveSharedEvent_(request));
@@ -748,6 +751,10 @@ function normalizeBoolean_(value) {
 
 function getGlobalTestMode_(config, fallbackValue) {
   var stored = PropertiesService.getScriptProperties().getProperty(getTestModePropertyKey_(config));
+  if (config.rosterMode === 'homecoming-2026' &&
+      (!['true', 'false'].includes(stored) || typeof config.testMode !== 'boolean' || (stored === 'true') !== config.testMode)) {
+    throw new Error('Homecoming global mode is unconfirmed. Owner review required.');
+  }
   if (stored == null || stored === '') {
     return fallbackValue;
   }

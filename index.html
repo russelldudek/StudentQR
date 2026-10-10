@@ -393,6 +393,7 @@
     <section id="scanner" class="card hidden">
       <h2>Scanner</h2>
       <p class="muted" id="scannerEventTitle">No dance selected.</p>
+      <div id="scannerMirrorBanner" class="stat hidden" role="status" style="margin-bottom:12px;"></div>
       <p class="muted" id="scannerRosterStatus" role="status" aria-live="polite">Roster not loaded yet.</p>
       <p class="muted">Scan one student's ticket barcode at a time. Keep the entire barcode visible and steady. If guest flag says yes, confirm the guest is on the list.</p>
       <p class="muted" id="scannerDecoderStatus" role="status">Supports Code 128 ticket barcodes and QR codes.</p>
@@ -416,6 +417,11 @@
           <label for="manualQr">Manual ticket / QR value (fallback)</label>
           <input id="manualQr" placeholder="Enter the exact ticket value, including leading zeros" inputmode="text" />
           <button id="manualSubmit" style="margin-top: 8px;">Scan / admit</button>
+          <div id="decodedCandidate" class="stat hidden" role="status" style="margin-top:12px;"></div>
+          <div id="candidateActions" class="row hidden" style="margin-top:8px;">
+            <button id="confirmCandidate">Confirm this ticket</button>
+            <button id="cancelCandidate" class="btn-secondary">Cancel</button>
+          </div>
           <div id="scannerGuestFlag" class="hidden" style="margin-top: 12px;"></div>
           <h3 style="margin-top:16px;">Last scan result</h3>
           <div id="scanResult" class="stat scan-feedback scan-state-idle">
@@ -508,6 +514,9 @@
         cfg[f] = el.type === 'checkbox' ? el.checked : el.value.trim();
       }
       cfg.allowedStatuses = [];
+      if (state.config?.rosterMode === 'homecoming-2026') {
+        return { ...state.config, eventName: cfg.eventName, testMode: cfg.testMode };
+      }
       return cfg;
     }
 
@@ -552,6 +561,14 @@
         banner.innerHTML += `<div class="muted">Global mode update not confirmed: ${escapeHtml(state.testModeSyncError)}. ${enabled ? 'This device remains in read-only test mode.' : 'Live scanning is paused until the mode change is confirmed.'}</div>`;
       }
       ids('manualSubmit').textContent = enabled ? 'Test scan only' : 'Scan / admit';
+      const mirror = cfg?.environment === 'mirror-test';
+      const label = enabled ? 'Mirror Test - Read-only scans' : 'Mirror Test - Practice check-ins (mirror records only)';
+      ids('scannerMirrorBanner').classList.toggle('hidden', !mirror);
+      ids('scannerMirrorBanner').textContent = mirror ? label : '';
+      if (mirror) {
+        banner.classList.remove('hidden');
+        banner.innerHTML = `<strong>${escapeHtml(label)}</strong>` + banner.innerHTML;
+      }
     }
 
     function syncEffectiveTestMode(enabled, options = {}) {
@@ -641,6 +658,11 @@
           throw new Error('Invalid allowed-status layout in shared setup config.');
         }
         normalizedCfg.allowedStatuses = cfg.allowedStatuses.slice();
+      }
+      if (cfg.rosterMode !== undefined || cfg.environment !== undefined) {
+        if (cfg.rosterMode !== 'homecoming-2026' || cfg.environment !== 'mirror-test') throw new Error('Unsupported roster environment.');
+        normalizedCfg.rosterMode = cfg.rosterMode;
+        normalizedCfg.environment = cfg.environment;
       }
       return normalizedCfg;
     }
@@ -745,7 +767,32 @@
       return { eventId, apiUrl, token, role: 'pending' };
     }
 
+    let trustedBackendPromise = null;
+
+    function isExactAppsScriptEndpoint(value) {
+      if (typeof value !== 'string' || !/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(value)) return false;
+      const url = new URL(value);
+      return url.href === value && !url.username && !url.password && !url.search && !url.hash;
+    }
+
+    async function loadTrustedBackends() {
+      if (!trustedBackendPromise) trustedBackendPromise = (async () => {
+        const registryUrl = new URL('assets/trusted-backends.json', window.location.href).href;
+        const res = await fetch(registryUrl, { cache: 'no-store', redirect: 'error', credentials: 'same-origin' });
+        if (!res.ok || res.redirected || (res.url && res.url !== registryUrl)) throw new Error('Trusted endpoint registry unavailable.');
+        const registry = await res.json();
+        if (registry?.version !== 1 || !Array.isArray(registry.endpoints) || registry.endpoints.some(value => !isExactAppsScriptEndpoint(value))) throw new Error('Trusted endpoint registry invalid.');
+        return new Set(registry.endpoints);
+      })().catch(err => { trustedBackendPromise = null; throw err; });
+      return trustedBackendPromise;
+    }
+
+    async function assertTrustedBackend(apiUrl) {
+      if (!isExactAppsScriptEndpoint(apiUrl) || !(await loadTrustedBackends()).has(apiUrl)) throw new Error('Private dance endpoint is not approved in this app. No key was sent.');
+    }
+
     async function eventRequest(action, access, payload = {}) {
+      await assertTrustedBackend(access.apiUrl);
       const res = await fetch(access.apiUrl, { method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ revision: access.revision, ...payload, action, eventId: access.eventId, token: access.token }) });
@@ -856,6 +903,8 @@
       const normalizedCfg = normalizeConfigTestMode(cfg);
       const rosterChanged = rosterConfigKey(state.config) !== rosterConfigKey(normalizedCfg);
       if (rosterChanged) {
+        cancelDecodedCandidate();
+        renderScannerRelationship(null);
         state.rosterRequestId += 1;
         state.rosterLoaded = false;
         state.rosterError = '';
@@ -882,6 +931,8 @@
       updateEventTitles(normalizedCfg);
       updateSharedModeUi();
       updateTestModeUi(normalizedCfg);
+      const fixed = normalizedCfg.rosterMode === 'homecoming-2026';
+      for (const field of ['sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol', 'statusCol', 'admittedAtCol', 'guestCol', 'admittedValue', 'timeZone', 'assignQrIds']) ids(field).disabled = fixed;
     }
 
     function updateEventTitles(cfg = state.config) {
@@ -1325,6 +1376,12 @@
           guestValue,
           bringingGuest: isGuestFlagEnabled(guestValue),
           admittedAt: readRowValue(r, cfg.admittedAtCol, ['Admitted At', 'admitted_at']),
+          personType: typeof r.personType === 'string' ? r.personType : '',
+          linkedPersonType: typeof r.linkedPersonType === 'string' ? r.linkedPersonType : '',
+          linkedName: typeof r.linkedName === 'string' ? r.linkedName : '',
+          linkedTicketId: typeof r.linkedTicketId === 'string' ? r.linkedTicketId : '',
+          linkedStatus: typeof r.linkedStatus === 'string' ? r.linkedStatus : '',
+          linkedAdmittedAt: typeof r.linkedAdmittedAt === 'string' ? r.linkedAdmittedAt : '',
         };
       });
     }
@@ -1338,7 +1395,7 @@
       return cfg ? JSON.stringify([
         cfg.apiUrl, cfg.sheetUrl, cfg.sheetName, cfg.eventName, cfg.firstNameCol,
         cfg.lastNameCol, cfg.qrCol, cfg.statusCol, cfg.admittedAtCol, cfg.guestCol,
-        cfg.admittedValue, cfg.timeZone,
+        cfg.admittedValue, cfg.timeZone, cfg.rosterMode, cfg.environment,
       ]) : '';
     }
 
@@ -1398,6 +1455,10 @@
           syncEffectiveTestMode(data.testMode);
         }
         state.rows = normalizeRows(rows, cfg);
+        if (state.scannerRelationshipTicket) {
+          const current = state.rows.find(row => row.qr === state.scannerRelationshipTicket);
+          renderScannerRelationship(current && !['Pending', 'Needs Review'].includes(current.status) ? current : null);
+        }
         state.rosterLoaded = true;
         state.rosterError = '';
         renderRosterStatus(state.rows.length ? `Roster: ${state.rows.length} student${state.rows.length === 1 ? '' : 's'}.` : 'No students on the roster.');
@@ -1408,6 +1469,7 @@
         return true;
       } catch (err) {
         if (requestId !== undefined && !isCurrent()) return false;
+        renderScannerRelationship(null);
         state.rosterError = toFriendlyError(err).message;
         renderRosterStatus(`Roster unavailable: ${state.rosterError}. Admissions paused; displayed rows may be stale.`);
         if (!options.silent) toast(state.rosterError, false);
@@ -1417,6 +1479,7 @@
 
     async function assignMissingQrIds() {
       try {
+        if (state.config?.rosterMode === 'homecoming-2026') throw new Error('Homecoming uses printed ticket IDs. Assignment is disabled.');
         const cfg = saveConfig({ silent: true });
         if (!cfg) return;
         const data = await callApi('assignQrIds', {});
@@ -1455,10 +1518,10 @@
           : '<span class="muted">No</span>';
         return `
           <tr>
-            <td>${escapeHtml(r.name || '(No name)')}</td>
+            <td>${escapeHtml(r.name || '(No name)')}${r.personType ? `<div class="muted">${escapeHtml(r.personType)}</div>` : ''}</td>
             <td>${escapeHtml(r.qr)}</td>
             <td><span class="status-pill ${statusClass}">${escapeHtml(String(r.status))}</span></td>
-            <td>${guestBadge}</td>
+            <td>${r.personType === 'Guest' ? 'Associated student' : guestBadge}${r.linkedName ? `<div>${escapeHtml(r.linkedName)} · ${escapeHtml(r.linkedTicketId)}<br>${escapeHtml(r.linkedStatus)}</div>` : ''}</td>
             <td>${escapeHtml(r.admittedAt)}</td>
           </tr>`;
       }).join('');
@@ -1475,6 +1538,7 @@
         <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
       `;
 
+      if (state.config?.rosterMode === 'homecoming-2026') ids('stats').innerHTML += `<div class="stat">Students <strong>${state.rows.filter(r => r.personType === 'Student').length}</strong></div><div class="stat">Guests <strong>${state.rows.filter(r => r.personType === 'Guest').length}</strong></div>`;
       updateTestModeUi();
     }
 
@@ -1496,6 +1560,52 @@
 
       target.className = 'hidden';
       target.innerHTML = '';
+    }
+
+    function renderScannerRelationship(row) {
+      state.scannerRelationshipTicket = row?.qr || '';
+      if (!row || ['Pending', 'Needs Review'].includes(row.status)) { updateScannerGuestFlag(false, ''); return; }
+      if (!row.personType) { updateScannerGuestFlag(row.bringingGuest, row.guestValue || ''); return; }
+      const target = ids('scannerGuestFlag');
+      target.className = row.linkedTicketId ? 'scanner-guest-flag' : 'stat';
+      target.innerHTML = row.linkedTicketId
+        ? `<div class="guest-flag-title">${row.personType === 'Guest' ? 'Associated student' : 'Bringing guest: Yes'}</div><div class="guest-flag-detail">${escapeHtml(row.linkedName)}<br>Ticket: ${escapeHtml(row.linkedTicketId)}<br>Status: ${escapeHtml(row.linkedStatus)}<br>Admitted at: ${escapeHtml(row.linkedAdmittedAt || '-')}<br>Each ticket is checked in separately.</div>`
+        : '<div class="muted">Bringing guest: No</div>';
+    }
+
+    function candidateSnapshot(row) { return row ? JSON.stringify(row.raw) : ''; }
+
+    function presentDecodedCandidate(ticket, source) {
+      const matches = state.rows.filter(row => row.qr === ticket);
+      const row = matches.length === 1 ? matches[0] : null;
+      state.decodedCandidate = { ticket, source, configKey: rosterConfigKey(state.config), snapshot: candidateSnapshot(row) };
+      setScreenAlert('idle'); renderScannerRelationship(row);
+      ids('decodedCandidate').classList.remove('hidden'); ids('candidateActions').classList.remove('hidden');
+      ids('decodedCandidate').innerHTML = `<div class="scan-kicker">Confirm decoded ticket</div><div class="scan-name">${escapeHtml(ticket)}</div><div>${escapeHtml(row?.name || 'Not on roster')}</div><p>Not checked in. Software decoding found this candidate; verify it is the ticket you intend to scan.</p>`;
+      renderScanResultCard({ stateClass: 'scan-state-idle', kicker: 'Awaiting confirmation', name: row?.name || 'Ticket candidate', detail: 'No attendance update requested.', status: row?.status || 'No match', qrValue: ticket, admittedAt: row?.admittedAt || '' });
+    }
+
+    function cancelDecodedCandidate() {
+      state.decodedCandidate = null;
+      ids('decodedCandidate').classList.add('hidden'); ids('decodedCandidate').innerHTML = '';
+      ids('candidateActions').classList.add('hidden'); renderScannerRelationship(null);
+      state.nextScanAt = Date.now() + 1000;
+    }
+
+    async function confirmDecodedCandidate() {
+      const candidate = state.decodedCandidate;
+      if (!candidate || state.isProcessingScan) return;
+      state.isProcessingScan = true;
+      try {
+        await loadRoster({ silent: true });
+        const matches = state.rows.filter(row => row.qr === candidate.ticket);
+        if (state.rosterError || state.decodedCandidate !== candidate || candidate.configKey !== rosterConfigKey(state.config) || matches.length !== 1 || candidate.snapshot !== candidateSnapshot(matches[0])) throw new Error('Roster or ticket assignment changed. Scan and confirm again.');
+        cancelDecodedCandidate();
+        await admitByQr(candidate.ticket, { source: candidate.source });
+      } catch (err) {
+        cancelDecodedCandidate(); setScreenAlert('error');
+        renderScanResultCard({ stateClass: 'scan-state-blocked', kicker: 'Not confirmed', name: 'Select ticket again', detail: err.message, status: 'Not checked in', qrValue: candidate.ticket, admittedAt: '' });
+      } finally { state.isProcessingScan = false; state.nextScanAt = Date.now() + 1000; }
     }
 
     function renderScanStatusMessage(row, cfg, isTestMode) {
@@ -1621,6 +1731,7 @@
       qrValue = typeof qrValue === 'string' ? qrValue.trim() : '';
       if (state.admissionInFlight) return;
       state.admissionInFlight = true;
+      renderScannerRelationship(null);
       setScreenAlert('idle');
       try {
         if (!qrValue) throw new Error('Missing QR value.');
@@ -1643,9 +1754,11 @@
         if (matches.length && (requestedTestMode || parseTestMode(state.config.testMode))) {
           // A test is a read-only roster lookup, never a write-capable admit request.
           const student = matches[0];
+          if (['Pending', 'Needs Review'].includes(student.status)) throw new Error(`${student.status}: owner review required.`);
           const alreadyAdmitted = normalizeKey(student.status) === normalizeKey(state.config.admittedValue);
           setManualQrValue(student.qr);
           updateScannerGuestFlag(student.bringingGuest, student.guestValue || 'No');
+          renderScannerRelationship(student);
           setScreenAlert(alreadyAdmitted ? 'error' : 'warning');
           renderScanResultCard({ stateClass: alreadyAdmitted ? 'scan-state-already' : 'scan-state-test',
             kicker: alreadyAdmitted ? 'Already Scanned' : 'Test Scan Only', name: student.name || 'Student found',
@@ -1713,6 +1826,8 @@
         }
         const isTestMode = Object.prototype.hasOwnProperty.call(res || {}, 'testMode') ? parseTestMode(res.testMode) : false;
         updateScannerGuestFlag(bringingGuest, guestValue || 'No');
+        const returnedPerson = normalizeRows([row], cfg)[0];
+        renderScannerRelationship(returnedPerson);
 
         const alreadyAdmitted = res.alreadyAdmitted === true || String(res?.message || '').toLowerCase().includes('already marked as admitted');
         const blocked = Boolean(res?.error);
@@ -1759,7 +1874,7 @@
             admittedAt: admittedAtValue,
           });
         } else {
-          setScreenAlert(bringingGuest ? 'warning' : 'success');
+          setScreenAlert(bringingGuest || returnedPerson.personType === 'Guest' ? 'warning' : 'success');
           renderScanResultCard({
             stateClass: 'scan-state-success',
             kicker: 'Checked In',
@@ -1789,6 +1904,7 @@
       } catch (err) {
         const message = toFriendlyError(err).message;
         updateScannerGuestFlag(false, '');
+        renderScannerRelationship(null);
         setScreenAlert('error');
         renderScanResultCard({ stateClass: 'scan-state-blocked', kicker: 'Cannot Admit',
           name: 'Admission not confirmed', detail: message, status: 'Not confirmed', qrValue, admittedAt: '' });
@@ -1842,7 +1958,7 @@
 
       const loop = async () => {
         if (!state.scanning) return;
-        if (state.isProcessingScan || Date.now() < state.nextScanAt) {
+        if (state.isProcessingScan || state.decodedCandidate || Date.now() < state.nextScanAt) {
           state.scanLoopId = requestAnimationFrame(loop);
           return;
         }
@@ -1869,7 +1985,8 @@
               stopScanning();
             }
 
-            await admitByQr(normalizedValue, { source: 'camera' });
+            if (state.decodeSource === 'software') presentDecodedCandidate(normalizedValue, 'camera');
+            else await admitByQr(normalizedValue, { source: 'camera' });
 
             if (shouldKeepScannerOpen() && state.stream) {
               // Leave a full second to read the result before accepting any next code.
@@ -2019,7 +2136,7 @@
           ids('scannerDecoderStatus').textContent = 'Multiple codes visible. Scan one ticket at a time.';
           throw new Error('Scan one ticket at a time. Multiple codes are visible.');
         }
-        if (values.length === 1) return values[0];
+        if (values.length === 1) { state.decodeSource = 'native'; return values[0]; }
       }
 
       if (typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
@@ -2031,6 +2148,7 @@
       canvas.height = video.videoHeight;
       state.scanContext.drawImage(video, 0, 0, canvas.width, canvas.height);
       const image = state.scanContext.getImageData(0, 0, canvas.width, canvas.height);
+      state.decodeSource = 'software';
       return decodeCodePixels(image);
     }
 
@@ -2061,6 +2179,8 @@
     }
 
     async function scanFromPhotoFile(file) {
+      if (state.admissionInFlight || state.isProcessingScan) return;
+      cancelDecodedCandidate();
       setScreenAlert('idle');
       try {
         const rawValue = await decodeQrFromImageFile(file);
@@ -2073,7 +2193,7 @@
           toast('No ticket barcode or QR code was found. Use a clear photo of one ticket, with the entire barcode visible.', false);
           return;
         }
-        await admitByQr(rawValue.trim(), { source: 'photo' });
+        presentDecodedCandidate(rawValue.trim(), 'photo');
       } catch (err) {
         console.warn(err);
         setManualQrValue('');
@@ -2152,6 +2272,8 @@
         event.target.value = '';
       });
       ids('manualSubmit').addEventListener('click', () => admitByQr(ids('manualQr').value.trim()));
+      ids('confirmCandidate').addEventListener('click', confirmDecodedCandidate);
+      ids('cancelCandidate').addEventListener('click', cancelDecodedCandidate);
       ids('manualQr').addEventListener('keydown', async (event) => {
         if (event.key !== 'Enter') return;
         event.preventDefault();

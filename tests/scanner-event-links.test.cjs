@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const cfg = { sheetUrl: 'https://fictional.invalid/sheet', apiUrl: 'https://fictional.invalid/api',
+const cfg = { sheetUrl: 'https://fictional.invalid/sheet', apiUrl: 'https://script.google.com/macros/s/FICTIONAL/exec',
   sheetName: 'Students', firstNameCol: 'First Name', lastNameCol: 'Last Name', qrCol: 'QR_ID',
   statusCol: 'Status', admittedAtCol: 'Admitted At', guestCol: 'Bringing Guest',
   eventName: 'Fictional Dance', admittedValue: 'Admitted', timeZone: 'UTC', testMode: false };
@@ -82,7 +82,9 @@ function frontend(url, options = {}) {
     document: { getElementById: el, querySelectorAll: () => [], createElement: () => el('toast'), body: { appendChild() {}, classList: el('body').classList } },
     localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
     navigator: {}, setTimeout() {}, clearTimeout() {},
-    fetch: async (url, fetchOptions) => { const body = JSON.parse(fetchOptions.body); requests.push(body);
+    fetch: async (url, fetchOptions) => {
+      if (!fetchOptions.body) return { ok: true, json: async () => ({ version: 1, endpoints: [cfg.apiUrl] }) };
+      const body = JSON.parse(fetchOptions.body); requests.push(body);
       const data = options.api ? options.api(body) : body.action === 'getEvent' ? { eventId: 'fictional-event', role: 'helper', revision: 1, config: cfg } : { rows: [{ 'First Name': 'Fictional', 'Last Name': 'Student', QR_ID: '001', Status: '' }], testMode: false };
       return { ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(data) }; },
     btoa: v => Buffer.from(v, 'binary').toString('base64'), atob: v => Buffer.from(v, 'base64').toString('binary') });

@@ -58,6 +58,13 @@ test('preparing or missing event guard refuses public bootstrap and legacy reque
   for (const action of ['list', 'admit', 'saveEvent']) assert.match(f.request({ action, eventId: undefined, token: undefined }).error, /Homecoming|ready/i);
   assert.equal(f.trace.length, 0);
 });
+test('dedicated mirror cannot fall back to generic after binding or event erasure or corruption', () => {
+  for (const key of ['studentQrHomecomingBinding', 'studentQrSharedDance']) for (const value of [null, '{broken', '{}']) {
+    const f = fixture(); f.ready(); if (value === null) f.properties.delete(key); else f.properties.set(key, value);
+    for (const action of ['list', 'admit', 'saveEvent', 'setTestMode']) assert(f.request({ action, eventId: undefined, token: undefined }).error);
+    assert.equal(f.trace.length, 0);
+  }
+});
 test('first practice admission verified once; duplicate on second device retains original timestamp', () => {
   const f = fixture(); f.ready();
   const first = f.request({ action: 'admit', qrValue: '001B' }); assert.equal(first.row.Status, 'Admitted');

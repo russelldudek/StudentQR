@@ -1,4 +1,6 @@
 /** Server-bound mirror reader. The combined intake projection remains read-only. */
+// This module seals a dedicated mirror deployment even if properties are erased.
+var HOMECOMING_DEPLOYMENT_KIND_ = 'mirror-test';
 var HOMECOMING_PRODUCTION_ID_ = '1hlWdxxzlP2Zbl9m4_MN49XBgBrL7YiG67ur2p2tEueU';
 var HOMECOMING_BINDING_KEY_ = 'studentQrHomecomingBinding';
 var HOMECOMING_LEDGER_HEADERS_ = ['Event ID', 'Person Type', 'Ticket ID (JSON)',

@@ -11,7 +11,7 @@ function scanner(options = {}) {
   const pixels = { width: 32, height: 16, data: new Uint8ClampedArray(32 * 16 * 4).fill(255) };
   const canvas = { width: 32, height: 16, getContext: () => ({ drawImage() {}, getImageData: () => pixels }) };
   const el = id => {
-    if (!elements.has(id)) elements.set(id, { value: '', checked: false, classList: { toggle() {}, contains: () => false }, style: {}, innerHTML: '', textContent: '' });
+    if (!elements.has(id)) elements.set(id, { value: '', checked: false, classList: { add() {}, remove() {}, toggle() {}, contains: () => false }, style: {}, innerHTML: '', textContent: '' });
     return elements.get(id);
   };
   const ctx = vm.createContext({ URL: { createObjectURL: () => 'blob:fictional', revokeObjectURL: value => revoked.push(value) },
@@ -40,10 +40,11 @@ test('iPhone software path reads a Code 128 camera frame with leading zeros', as
   f.ctx.video = { readyState: 2, videoWidth: 32, videoHeight: 16 };
   assert.equal(await f.run('readQrFromVideo(video)'), '083');
 });
-test('photo barcode passes the exact ticket value to admission, never a number', async () => {
+test('photo barcode preserves the exact ticket for explicit confirmation, never auto-admits', async () => {
   const f = scanner({ window: { ZXing: software('001B') } });
   await f.run('scanFromPhotoFile({name:"fictional.png"})');
-  assert.deepEqual(f.admitted, ['001B']); assert.deepEqual(f.revoked, ['blob:fictional']);
+  assert.deepEqual(f.admitted, []); assert.equal(f.run('state.decodedCandidate.ticket'), '001B');
+  assert.match(f.el('decodedCandidate').innerHTML, /001B/); assert.deepEqual(f.revoked, ['blob:fictional']);
 });
 test('native detector requests both supported QR and Code 128 formats', async () => {
   let formats;
