@@ -6,7 +6,7 @@ function handleLiveRequest_(e, method) {
     var request = parseLiveRequest_(e,method), binding = readLiveBinding_(), event = readLiveEvent_();
     assertLiveBinding_(binding,event); var role = authorizeLive_(event,request);
     function dispatch(b, ev, currentRole) {
-      if (request.action === 'getEvent' && typeof readLiveContext_ !== 'function') {
+      if (request.action === 'getEvent' && typeof dispatchLiveAction_ !== 'function') {
         var response = {eventId:ev.eventId,role:currentRole,revision:ev.authRevision,config:ev.config};
         if (currentRole === 'admin') response.helperToken = ev.helperToken; return response;
       }
