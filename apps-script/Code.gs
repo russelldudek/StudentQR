@@ -24,7 +24,22 @@ function handleRequest_(e, method) {
   try {
     var request = getRequestData_(e, method);
     var action = String(request.action || '').trim().toLowerCase();
-    var config = buildConfig_(request);
+    rejectDeclaredIntakeAdapter_(request, e, method);
+    if (action === 'saveevent') return jsonResponse_(saveSharedEvent_(request));
+    var legacyConfig = !request.eventId && action !== 'getevent' ? buildConfig_(request) : null;
+    var sharedEvent = readSharedEvent_();
+    if (action === 'getevent') return jsonResponse_(sharedEventResponse_(sharedEvent, request));
+    if (sharedEvent) {
+      var role = authorizeSharedEvent_(sharedEvent, request);
+      if (role !== 'admin' && action !== 'list' && action !== 'admit') {
+        throw new Error('This action requires Eve\'s private admin link.');
+      }
+      if (request.revision !== sharedEvent.revision) throw new Error('Dance setup changed. Refresh the roster before scanning.');
+      // A link grants access to the stored dance, never a caller-selected sheet.
+    } else if (request.eventId || request.token) {
+      throw new Error('Private dance link not found.');
+    }
+    var config = sharedEvent ? buildConfig_({ config: sharedEvent.config }) : legacyConfig || buildConfig_(request);
 
     if (!config.sheetUrl) {
       throw new Error('Missing sheetUrl in request config.');
@@ -51,10 +66,10 @@ function handleRequest_(e, method) {
     }
 
     if (action === 'admit') {
-      if (!request.qrValue) {
+      if (typeof request.qrValue !== 'string' || !request.qrValue.trim()) {
         throw new Error('Missing qrValue for admit action.');
       }
-      return jsonResponse_(admitRow_(config, request.qrValue));
+      return jsonResponse_(admitRow_(config, request.qrValue, sharedEvent ? request : null));
     }
 
     throw new Error('Unsupported action: ' + action);
@@ -62,6 +77,92 @@ function handleRequest_(e, method) {
     return jsonResponse_({
       error: err && err.message ? err.message : String(err),
     });
+  }
+}
+
+function readSharedEvent_() {
+  var value = PropertiesService.getScriptProperties().getProperty('studentQrSharedDance');
+  if (!value) return null;
+  var event = JSON.parse(value);
+  if (event.version !== 1 || !event.eventId || !event.config) throw new Error('Stored dance configuration is invalid.');
+  return event;
+}
+
+function sharedTokenHash_(token) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid private link key.');
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token).map(function(byte) {
+    return ('0' + ((byte + 256) % 256).toString(16)).slice(-2);
+  }).join('');
+}
+
+function authorizeSharedEvent_(event, request) {
+  if (!event || request.eventId !== event.eventId) throw new Error('Private dance link not found.');
+  var hash = sharedTokenHash_(request.token);
+  if (hash === event.adminHash) return 'admin';
+  if (hash === event.helperHash) return 'helper';
+  throw new Error('Invalid private link key.');
+}
+
+function sharedEventResponse_(event, request) {
+  var role = authorizeSharedEvent_(event, request);
+  var config = cloneObject_(event.config);
+  config.testMode = getGlobalTestMode_(config, config.testMode);
+  var response = { eventId: event.eventId, role: role, revision: event.revision, config: config };
+  if (role === 'admin') response.helperToken = event.helperToken;
+  return response;
+}
+
+function validateSharedEventConfig_(input) {
+  var fields = ['sheetUrl', 'apiUrl', 'sheetName', 'firstNameCol', 'lastNameCol', 'qrCol',
+    'statusCol', 'guestCol', 'admittedAtCol', 'eventName', 'admittedValue', 'timeZone'];
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Missing shared dance setup.');
+  var config = {};
+  fields.forEach(function(field) {
+    if (typeof input[field] !== 'string' || (field !== 'guestCol' && !input[field].trim())) {
+      throw new Error('Invalid shared dance field: ' + field);
+    }
+    config[field] = input[field].trim();
+  });
+  if (!/^https?:\/\//.test(config.sheetUrl) || !/^https?:\/\//.test(config.apiUrl)) throw new Error('Invalid dance URL.');
+  if (typeof input.testMode !== 'boolean') throw new Error('Invalid shared test mode.');
+  config.testMode = input.testMode;
+  config.allowedStatuses = [];
+  return config;
+}
+
+function saveSharedEvent_(request) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('Dance setup is busy. Try again.');
+  try {
+    var previous = readSharedEvent_();
+    if (previous && !request.eventId && request.adminToken && request.helperToken &&
+        sharedTokenHash_(request.adminToken) === previous.adminHash && sharedTokenHash_(request.helperToken) === previous.helperHash &&
+        JSON.stringify(validateSharedEventConfig_(request.config)) === JSON.stringify(previous.config)) {
+      return sharedEventResponse_(previous, { eventId: previous.eventId, token: request.adminToken });
+    }
+    if (previous) {
+      if (authorizeSharedEvent_(previous, request) !== 'admin') throw new Error('Requires the private admin link.');
+      if (request.revision !== previous.revision) throw new Error('Dance setup changed. Reload Eve\'s admin link before saving.');
+    }
+    var config = validateSharedEventConfig_(request.config);
+    // Read-only readiness check: do not issue working links for an incompatible sheet.
+    getSheetContext_(config);
+    var event = previous || {
+      version: 1, eventId: Utilities.getUuid(), revision: 0,
+      adminHash: sharedTokenHash_(request.adminToken), helperHash: sharedTokenHash_(request.helperToken),
+      helperToken: request.helperToken
+    };
+    if (event.adminHash === event.helperHash) throw new Error('Admin and helper link keys must differ.');
+    event.config = config;
+    event.revision += 1;
+    var serialized = JSON.stringify(event);
+    if (serialized.length > 8000) throw new Error('Dance setup is too large to save.');
+    var properties = PropertiesService.getScriptProperties();
+    properties.setProperty('studentQrSharedDance', serialized);
+    if (properties.getProperty('studentQrSharedDance') !== serialized) throw new Error('Shared dance save could not be confirmed.');
+    return sharedEventResponse_(event, { eventId: event.eventId, token: request.token || request.adminToken });
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -82,6 +183,156 @@ function getRequestData_(e, method) {
   }
 
   return request;
+}
+
+function rejectDeclaredIntakeAdapter_(request, e, method) {
+  var declarations = [];
+  function inspect(source) {
+    if (!source || typeof source !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(source, 'adapter')) {
+      declarations.push(source.adapter);
+    }
+    var config = source.config;
+    if (config && typeof config === 'string') {
+      try {
+        config = JSON.parse(config);
+      } catch (err) {
+        throw new Error('config must be valid JSON when provided as a string.');
+      }
+    }
+    if (config && typeof config === 'object' && Object.prototype.hasOwnProperty.call(config, 'adapter')) {
+      declarations.push(config.adapter);
+    }
+  }
+  inspect(request);
+  // Check the original inputs too; POST merging must not hide a declaration.
+  inspect(e && e.parameter);
+  if (method === 'POST' && e && e.postData && e.postData.contents) {
+    var bodyText = String(e.postData.contents).trim();
+    if (bodyText) inspect(JSON.parse(bodyText));
+  }
+  var multipleParams = e && e.parameters;
+  if (multipleParams) {
+    if (Object.prototype.hasOwnProperty.call(multipleParams, 'adapter')) {
+      var adapters = multipleParams.adapter;
+      if (!Array.isArray(adapters)) adapters = [adapters];
+      if (!adapters.length) declarations.push(adapters);
+      for (var p = 0; p < adapters.length; p += 1) declarations.push(adapters[p]);
+    }
+    if (Array.isArray(multipleParams.config)) {
+      for (var q = 0; q < multipleParams.config.length; q += 1) inspect({ config: multipleParams.config[q] });
+    }
+  }
+  if (!declarations.length) return;
+  for (var i = 0; i < declarations.length; i += 1) {
+    if (typeof declarations[i] !== 'string' || !declarations[i] ||
+        declarations[i].trim() !== declarations[i] || /[\u0000-\u001f\u007f-\u009f]/.test(declarations[i])) {
+      throw new Error('Invalid adapter declaration; combined intake is disabled.');
+    }
+  }
+  for (var j = 1; j < declarations.length; j += 1) {
+    if (declarations[j] !== declarations[0]) {
+      throw new Error('Conflicting adapter declarations; combined intake is disabled.');
+    }
+  }
+  if (declarations[0] === 'combined-intake-v1') {
+    throw new Error('Combined intake adapter is disabled. The read-only projection is not an admission endpoint.');
+  }
+  throw new Error('Unsupported adapter; combined intake is disabled.');
+}
+
+function combinedProjectionError_(message) {
+  throw new Error('Combined intake: ' + message);
+}
+
+function combinedEmptyCell_(value) {
+  return value === '' || value === null;
+}
+
+function combinedLiteralIdentity_(value, label) {
+  if (typeof value !== 'string' || !value || value.trim() !== value ||
+      /[\u0000-\u001f\u007f-\u009f]/.test(value)) {
+    combinedProjectionError_(label + ' must be a nonempty, unpadded raw string without control characters.');
+  }
+  return value;
+}
+
+function combinedFullName_(value, label) {
+  if (typeof value !== 'string' || !value.trim()) {
+    combinedProjectionError_(label + ' must be nonblank full-name text.');
+  }
+  return value;
+}
+
+// Pure input projection only: no Sheet reads, inferred approval or attendance writes.
+function projectCombinedIntake_(values) {
+  var headers = ['Gateway student name', 'Student ID', 'Student ticket #', 'Grade',
+    'Bringing guest?', 'Guest name', 'Guest form submitted?', 'Guest ID uploaded?',
+    'School email received?', 'Guest ticket #'];
+  if (!Array.isArray(values) || values.length < 5) {
+    combinedProjectionError_('Expected raw rows with the exact header at row 5.');
+  }
+  for (var r = 0; r < values.length; r += 1) {
+    var rowDescriptor = Object.getOwnPropertyDescriptor(values, r);
+    if (!rowDescriptor || !Object.prototype.hasOwnProperty.call(rowDescriptor, 'value') ||
+        !Array.isArray(rowDescriptor.value)) {
+      combinedProjectionError_('Every row must be a dense raw cell array.');
+    }
+    var cells = rowDescriptor.value;
+    if (r >= 4 && cells.length < 10) combinedProjectionError_('Header/data rows require ten cells.');
+    for (var c = 0; c < cells.length; c += 1) {
+      var cellDescriptor = Object.getOwnPropertyDescriptor(cells, c);
+      if (!cellDescriptor || !Object.prototype.hasOwnProperty.call(cellDescriptor, 'value')) {
+        combinedProjectionError_('Sparse cells and accessors are not raw cell data.');
+      }
+      var cell = cellDescriptor.value;
+      if (cell !== null && typeof cell !== 'string' && typeof cell !== 'boolean' &&
+          !(typeof cell === 'number' && isFinite(cell))) {
+        combinedProjectionError_('Cells must be raw scalar values, not containers or undefined.');
+      }
+      if (r >= 4 && c >= 10 && !combinedEmptyCell_(cell)) {
+        combinedProjectionError_('Unknown populated extra header/data columns are not supported.');
+      }
+    }
+  }
+  for (var h = 0; h < headers.length; h += 1) {
+    if (values[4][h] !== headers[h]) combinedProjectionError_('Row 5 headers must match the exact ten-column schema.');
+  }
+  var subjects = [], studentIds = Object.create(null), tickets = Object.create(null), trailingEmpty = false;
+  function addSubject(personType, ticketId, sourceStudentId, fullName, sourceRow) {
+    if (Object.prototype.hasOwnProperty.call(tickets, ticketId)) combinedProjectionError_('Duplicate ticket across subjects.');
+    tickets[ticketId] = true;
+    subjects.push({ personType: personType, ticketId: ticketId, sourceStudentId: sourceStudentId,
+      fullName: fullName, sourceRow: sourceRow });
+  }
+  for (var rowIndex = 5; rowIndex < values.length; rowIndex += 1) {
+    var row = values[rowIndex], empty = true;
+    for (var column = 0; column < row.length; column += 1) {
+      if (!combinedEmptyCell_(row[column])) { empty = false; break; }
+    }
+    if (empty) { trailingEmpty = true; continue; }
+    if (trailingEmpty) combinedProjectionError_('An empty interior data row interrupts the intake.');
+    var studentId = combinedLiteralIdentity_(row[1], 'Student ID');
+    if (Object.prototype.hasOwnProperty.call(studentIds, studentId)) combinedProjectionError_('Duplicate student source ID.');
+    studentIds[studentId] = true;
+    var studentTicket = combinedLiteralIdentity_(row[2], 'Student ticket');
+    var studentName = combinedFullName_(row[0], 'Student name');
+    var guestDeclaration = row[4];
+    if (guestDeclaration === 'Yes') {
+      var guestName = combinedFullName_(row[5], 'Guest name');
+      var guestTicket = combinedLiteralIdentity_(row[9], 'Guest ticket');
+      addSubject('Student', studentTicket, studentId, studentName, rowIndex + 1);
+      addSubject('Guest', guestTicket, studentId, guestName, rowIndex + 1);
+    } else if (guestDeclaration === 'No' || combinedEmptyCell_(guestDeclaration)) {
+      if (!combinedEmptyCell_(row[5]) || !combinedEmptyCell_(row[9])) {
+        combinedProjectionError_('Guest name/ticket contradict the guest declaration.');
+      }
+      addSubject('Student', studentTicket, studentId, studentName, rowIndex + 1);
+    } else {
+      combinedProjectionError_('Guest declaration must be exact Yes, No or empty.');
+    }
+  }
+  return { readOnly: true, admissionEnabled: false, subjects: subjects };
 }
 
 function buildConfig_(request) {
@@ -141,7 +392,26 @@ function listRows_(config) {
   };
 }
 
-function admitRow_(config, qrValue) {
+function admitRow_(config, qrValue, eventRequest) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw new Error('Another admission is being processed. Please scan again.');
+  }
+  try {
+    if (eventRequest) {
+      var latest = readSharedEvent_();
+      authorizeSharedEvent_(latest, eventRequest);
+      if (latest.revision !== eventRequest.revision) throw new Error('Dance setup changed. Refresh the roster before scanning.');
+      config = buildConfig_({ config: latest.config });
+    }
+    config.testMode = getGlobalTestMode_(config, config.testMode);
+    return admitRowLocked_(config, qrValue);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function admitRowLocked_(config, qrValue) {
   var context = getSheetContext_(config);
   var values = context.sheet.getDataRange().getDisplayValues();
 
@@ -164,6 +434,8 @@ function admitRow_(config, qrValue) {
       row: target.row,
       matchedQrValue: target.qrValue,
       message: 'Student was already marked as admitted.',
+      alreadyAdmitted: true,
+      testMode: config.testMode,
     };
   }
 
@@ -201,11 +473,39 @@ function admitRow_(config, qrValue) {
   }
 
   var sheetRowNumber = target.rowNumber;
-  context.sheet.getRange(sheetRowNumber, context.headerMap[config.statusCol]).setValue(config.admittedValue);
-  context.sheet.getRange(sheetRowNumber, context.headerMap[config.admittedAtCol]).setValue(timestamp);
-
-  var updatedValues = context.sheet.getRange(sheetRowNumber, 1, 1, context.headers.length).getDisplayValues()[0];
-  var updatedRow = rowFromHeaders_(context.headers, updatedValues);
+  var statusCell = context.sheet.getRange(sheetRowNumber, context.headerMap[config.statusCol]);
+  var timestampCell = context.sheet.getRange(sheetRowNumber, context.headerMap[config.admittedAtCol]);
+  var originalStatus = statusCell.getFormula() || statusCell.getValue();
+  var originalTimestamp = timestampCell.getFormula() || timestampCell.getValue();
+  var updatedRow;
+  try {
+    statusCell.setValue(config.admittedValue);
+    timestampCell.setValue(timestamp);
+    SpreadsheetApp.flush();
+    var updatedValues = context.sheet.getRange(sheetRowNumber, 1, 1, context.headers.length).getDisplayValues()[0];
+    updatedRow = rowFromHeaders_(context.headers, updatedValues);
+    if (String(updatedRow[config.qrCol]).trim() !== target.qrValue ||
+        normalizeKey_(updatedRow[config.statusCol]) !== normalizeKey_(config.admittedValue) ||
+        String(updatedRow[config.admittedAtCol]).trim() !== timestamp) {
+      throw new Error('Attendance readback did not match the requested update.');
+    }
+  } catch (err) {
+    // Sheets writes are not transactional. Restore both cells before releasing the lock.
+    var rollbackFailed = false;
+    try { statusCell.setValue(originalStatus); } catch (statusError) { rollbackFailed = true; }
+    try { timestampCell.setValue(originalTimestamp); } catch (timestampError) { rollbackFailed = true; }
+    try { SpreadsheetApp.flush(); } catch (flushError) { rollbackFailed = true; }
+    try {
+      if (String(statusCell.getFormula() || statusCell.getValue()) !== String(originalStatus) ||
+          String(timestampCell.getFormula() || timestampCell.getValue()) !== String(originalTimestamp)) {
+        rollbackFailed = true;
+      }
+    } catch (readbackError) { rollbackFailed = true; }
+    if (rollbackFailed) {
+      throw new Error('Admission uncertain. Verify this student\'s attendance in the sheet before retrying. ' + err.message);
+    }
+    throw new Error('Admission could not be confirmed; previous attendance was restored. ' + err.message);
+  }
 
   return {
     row: updatedRow,
@@ -300,7 +600,12 @@ function getSheetContext_(config) {
   var headerMap = {};
   for (var i = 0; i < headers.length; i += 1) {
     if (!headers[i]) continue;
+    if (headerMap[headers[i]]) throw new Error('Duplicate column header: ' + headers[i]);
     headerMap[headers[i]] = i + 1;
+  }
+
+  if (config.qrCol === config.statusCol || config.qrCol === config.admittedAtCol || config.statusCol === config.admittedAtCol) {
+    throw new Error('QR, status and timestamp must use different columns.');
   }
 
   for (var j = 0; j < requiredHeaders.length; j += 1) {
@@ -343,12 +648,15 @@ function rowFromHeaders_(headers, rowValues, rowNumber) {
 
 function findRowByQrInValues_(values, context, qrValue, qrColumnName) {
   var qrColumnIndex = context.headerMap[qrColumnName];
-  var normalizedTarget = normalizeKey_(qrValue);
+  var targetValue = typeof qrValue === 'string' ? qrValue.trim() : '';
+  if (!targetValue) throw new Error('Missing string QR value.');
+  var target = null;
 
   for (var i = 1; i < values.length; i += 1) {
     var currentQrValue = String(values[i][qrColumnIndex - 1] || '').trim();
-    if (normalizeKey_(currentQrValue) === normalizedTarget) {
-      return {
+    if (currentQrValue && currentQrValue === targetValue) {
+      if (target) throw new Error('Duplicate QR_ID on the roster. Resolve the duplicate before admitting this student.');
+      target = {
         row: rowFromHeaders_(context.headers, values[i], i + 1),
         rowNumber: i + 1,
         qrValue: currentQrValue,
@@ -356,7 +664,7 @@ function findRowByQrInValues_(values, context, qrValue, qrColumnName) {
     }
   }
 
-  return null;
+  return target;
 }
 
 function normalizeAllowedStatuses_(value) {

@@ -246,7 +246,7 @@
 <body>
   <div class="container">
     <h1>Student QR Admissions</h1>
-    <p class="muted">Publish this file on GitHub Pages, complete setup once, then run check-in from any device.</p>
+    <p class="muted" id="appInstructions">Set up the dance once, then share the helpers' scanner QR.</p>
 
     <div class="tabs">
       <button class="tab" data-tab="setup" id="setupTabButton">Setup</button>
@@ -331,7 +331,15 @@
         <button id="resetConfig" class="btn-danger">Reset saved setup</button>
       </div>
       <h3>4) Saved dance setups</h3>
+      <p class="muted">Configure once, then save a shared dance to create Eve's private admin link and the helpers' scanner QR. Anyone holding either link can use its permissions; keep Eve's link private.</p>
+      <button id="publishEvent">Save shared dance and create links</button>
+      <p id="eventLinkStatus" class="muted" role="status" aria-live="polite"></p>
       <div class="grid">
+        <div>
+          <label for="adminLinkOutput">Eve's private admin URL</label>
+          <input id="adminLinkOutput" readonly placeholder="Created after shared dance is saved" />
+          <button id="copyAdminLink" class="btn-secondary" disabled>Copy Eve's admin link</button>
+        </div>
         <div>
           <label for="setupProfileSelect">Saved dance name</label>
           <select id="setupProfileSelect">
@@ -350,6 +358,8 @@
           </div>
         </div>
       </div>
+      <div id="helperQr" role="img" aria-label="Helpers' scanner link QR code" style="display:none; background:white; padding:24px; width:max-content; max-width:100%; margin-top:16px;"></div>
+      <p id="helperQrStatus" class="muted"></p>
       <p class="muted">Save by dance name, then copy the check-in link from the published site so other staff can open the same scanner setup on their phones.</p>
       <p class="muted">Expected endpoint behavior: <code>GET ?action=list</code> returns rows; <code>POST { action: "assignQrIds" }</code> fills blank QR IDs; <code>POST { action: "admit", qrValue }</code> matches the <code>QR_ID</code>, writes <code>Admitted</code>, and blocks only if that student is already admitted unless test mode is enabled.</p>
     </section>
@@ -357,6 +367,7 @@
     <section id="dashboard" class="card hidden">
       <h2>Dashboard</h2>
       <p class="muted" id="dashboardEventTitle">No dance selected.</p>
+      <p class="muted" id="dashboardRosterStatus" role="status" aria-live="polite">Roster not loaded yet.</p>
       <div id="testModeBanner" class="hidden" style="margin-bottom:12px;"></div>
       <div class="stats" id="stats"></div>
       <div class="row" style="margin:12px 0;">
@@ -382,7 +393,9 @@
     <section id="scanner" class="card hidden">
       <h2>Scanner</h2>
       <p class="muted" id="scannerEventTitle">No dance selected.</p>
-      <p class="muted">Scan the student's QR. If guest flag says yes, confirm the guest is on the list.</p>
+      <p class="muted" id="scannerRosterStatus" role="status" aria-live="polite">Roster not loaded yet.</p>
+      <p class="muted">Scan one student's ticket barcode at a time. Keep the entire barcode visible and steady. If guest flag says yes, confirm the guest is on the list.</p>
+      <p class="muted" id="scannerDecoderStatus" role="status">Supports Code 128 ticket barcodes and QR codes.</p>
       <div class="row">
         <div>
           <video id="video" autoplay playsinline muted></video>
@@ -400,15 +413,15 @@
           <input id="scanPhotoInput" type="file" accept="image/*" capture="environment" class="hidden" />
         </div>
         <div>
-          <label for="manualQr">Manual QR value input (fallback)</label>
-          <input id="manualQr" placeholder="Paste scanned value" />
+          <label for="manualQr">Manual ticket / QR value (fallback)</label>
+          <input id="manualQr" placeholder="Enter the exact ticket value, including leading zeros" inputmode="text" />
           <button id="manualSubmit" style="margin-top: 8px;">Scan / admit</button>
           <div id="scannerGuestFlag" class="hidden" style="margin-top: 12px;"></div>
           <h3 style="margin-top:16px;">Last scan result</h3>
           <div id="scanResult" class="stat scan-feedback scan-state-idle">
             <div class="scan-kicker">Ready</div>
             <div class="scan-name">Waiting for scan</div>
-            <div class="scan-detail">Start the camera or paste a QR value to validate the next student.</div>
+            <div class="scan-detail">Start the camera or enter a ticket value to validate the next student.</div>
           </div>
         </div>
       </div>
@@ -416,6 +429,8 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script src="assets/zxing-0.21.3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script>
     const state = {
       config: null,
@@ -423,6 +438,8 @@
       stream: null,
       scanning: false,
       detector: null,
+      softwareBarcodeReader: null,
+      nextDecodeAt: 0,
       scanLoopId: null,
       scanCanvas: null,
       scanContext: null,
@@ -431,6 +448,19 @@
       isProcessingScan: false,
       lastDetectedQrValue: '',
       lastDetectedAt: 0,
+      nextScanAt: 0,
+      rosterLoaded: false,
+      rosterError: '',
+      rosterRequestId: 0,
+      admissionInFlight: false,
+      testModePending: false,
+      testModeSyncError: '',
+      testModeRequestId: 0,
+      eventAccess: null,
+      eventLoading: false,
+      eventRequestId: 0,
+      eventSaving: false,
+      eventBootstrapKeys: null,
     };
 
     const ids = (id) => document.getElementById(id);
@@ -438,7 +468,8 @@
     const PROFILES_STORAGE_KEY = 'studentQrProfiles';
     const ACTIVE_PROFILE_KEY = 'studentQrActiveProfile';
     const AUTO_REFRESH_MS = 8000;
-    const APP_SHARE_VERSION = '2026-04-29-1';
+    const APP_SHARE_VERSION = '2026-10-10-2';
+    const LEGACY_SHARE_VERSION = '2026-04-29-1';
     const SHARE_CONFIG_FIELDS = [
       'sheetUrl',
       'apiUrl',
@@ -494,26 +525,41 @@
       }
     }
 
-    function coerceConfigTestModeOff(cfg) {
+    function parseTestMode(value) {
+      if (value === undefined || value === false || value === 0) return false;
+      if (value === true || value === 1) return true;
+      throw new Error('Invalid test-mode flag in setup config.');
+    }
+
+    function normalizeConfigTestMode(cfg) {
       if (!cfg || typeof cfg !== 'object') return cfg;
       return {
         ...cfg,
-        testMode: false,
+        testMode: parseTestMode(cfg.testMode),
       };
     }
 
     function updateTestModeUi(cfg = state.config || getConfigFromInputs()) {
       const enabled = Boolean(cfg?.testMode);
       const banner = ids('testModeBanner');
-      banner.classList.toggle('hidden', !enabled);
+      banner.classList.toggle('hidden', !enabled && !state.testModePending && !state.testModeSyncError);
       banner.innerHTML = enabled
         ? '<span class="status-pill status-guest">Test mode enabled</span><div class="muted" style="margin-top: 6px;">Scans will validate codes without writing attendance changes.</div>'
         : '';
+      if (state.testModePending) {
+        banner.innerHTML += '<div class="muted">Global mode change awaiting confirmation. Scanning is paused.</div>';
+      } else if (state.testModeSyncError) {
+        banner.innerHTML += `<div class="muted">Global mode update not confirmed: ${escapeHtml(state.testModeSyncError)}. ${enabled ? 'This device remains in read-only test mode.' : 'Live scanning is paused until the mode change is confirmed.'}</div>`;
+      }
       ids('manualSubmit').textContent = enabled ? 'Test scan only' : 'Scan / admit';
     }
 
-    function syncEffectiveTestMode(enabled) {
-      const normalized = Boolean(enabled);
+    function syncEffectiveTestMode(enabled, options = {}) {
+      const normalized = parseTestMode(enabled);
+      if (!options.force && (state.testModePending || state.testModeSyncError)) {
+        updateTestModeUi();
+        return;
+      }
       if (state.config) {
         state.config.testMode = normalized;
         localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state.config));
@@ -544,7 +590,7 @@
     function rememberProfile(cfg) {
       if (!cfg?.eventName) return;
       const profiles = getProfiles();
-      profiles[cfg.eventName] = coerceConfigTestModeOff(cfg);
+      profiles[cfg.eventName] = normalizeConfigTestMode(cfg);
       setProfiles(profiles);
     }
 
@@ -561,36 +607,81 @@
     }
 
     function encodeConfigForUrl(cfg) {
+      const normalizedCfg = validateSharedConfig(cfg);
       const compactConfig = SHARE_CONFIG_FIELDS.map((field) => {
-        if (field === 'testMode') return cfg[field] ? 1 : 0;
-        return cfg[field];
+        if (field === 'testMode') return normalizedCfg[field] ? 1 : 0;
+        return normalizedCfg[field];
       });
 
-      return btoa(unescape(encodeURIComponent(JSON.stringify(compactConfig))))
+      return btoa(unescape(encodeURIComponent(JSON.stringify({ v: 2, c: compactConfig }))))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/g, '');
     }
 
-    function decodeConfigFromUrl(value) {
+    function validateSharedConfig(cfg) {
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('Invalid shared setup payload.');
+      const normalizedCfg = {};
+      for (const field of SHARE_CONFIG_FIELDS) {
+        if (field === 'testMode') {
+          normalizedCfg[field] = parseTestMode(cfg[field]);
+        } else {
+          if (typeof cfg[field] !== 'string' || (field !== 'guestCol' && !cfg[field].trim())) {
+            throw new Error(`Invalid shared setup config field: ${field}.`);
+          }
+          normalizedCfg[field] = cfg[field].trim();
+        }
+      }
+      for (const field of ['sheetUrl', 'apiUrl']) {
+        const url = new URL(normalizedCfg[field]);
+        if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Invalid URL in shared setup config.');
+      }
+      if (cfg.allowedStatuses !== undefined) {
+        if (!Array.isArray(cfg.allowedStatuses) || cfg.allowedStatuses.some(status => typeof status !== 'string')) {
+          throw new Error('Invalid allowed-status layout in shared setup config.');
+        }
+        normalizedCfg.allowedStatuses = cfg.allowedStatuses.slice();
+      }
+      return normalizedCfg;
+    }
+
+    function decodeConfigFromUrl(value, linkVersion = '') {
+      if (linkVersion && ![APP_SHARE_VERSION, LEGACY_SHARE_VERSION].includes(linkVersion)) {
+        throw new Error('Unsupported shared setup link version.');
+      }
       const normalized = String(value || '')
         .replace(/-/g, '+')
         .replace(/_/g, '/');
       const padded = normalized + '==='.slice((normalized.length + 3) % 4);
       const parsed = JSON.parse(decodeURIComponent(escape(atob(padded))));
-
-      if (Array.isArray(parsed)) {
-        const cfg = {};
-        SHARE_CONFIG_FIELDS.forEach((field, index) => {
-          cfg[field] = field === 'testMode' ? Boolean(parsed[index]) : parsed[index];
-        });
-        return cfg;
+      let compact = parsed;
+      let fields = SHARE_CONFIG_FIELDS;
+      if (parsed && !Array.isArray(parsed) && Object.prototype.hasOwnProperty.call(parsed, 'v')) {
+        if (parsed.v !== 2 || !Array.isArray(parsed.c) || parsed.c.length !== SHARE_CONFIG_FIELDS.length || linkVersion === LEGACY_SHARE_VERSION) {
+          throw new Error('Unsupported shared setup payload version or format.');
+        }
+        compact = parsed.c;
+      } else if (linkVersion === APP_SHARE_VERSION) {
+        throw new Error('Shared setup link and payload versions do not match.');
+      } else if (Array.isArray(parsed) && parsed.length === 14) {
+        // Archived 2026-04-29 source included allowedStatuses immediately after eventName.
+        fields = [...SHARE_CONFIG_FIELDS.slice(0, 10), 'allowedStatuses', ...SHARE_CONFIG_FIELDS.slice(10)];
       }
 
-      return parsed;
+      if (Array.isArray(compact)) {
+        if (compact.length !== fields.length) throw new Error('Unsupported shared setup array format.');
+        const cfg = {};
+        fields.forEach((field, index) => {
+          cfg[field] = compact[index];
+        });
+        return validateSharedConfig(cfg);
+      }
+
+      return validateSharedConfig(parsed);
     }
 
     function buildShareUrl(cfg) {
+      if (state.eventAccess) return buildEventUrl('helper');
       if (!cfg?.eventName || window.location.protocol === 'file:') return '';
       const url = new URL(window.location.href);
       url.searchParams.set('setup', encodeConfigForUrl(cfg));
@@ -604,6 +695,140 @@
       const shareUrl = buildShareUrl(cfg);
       ids('shareLinkOutput').value = shareUrl || '';
       ids('copyShareLink').disabled = !shareUrl;
+      const adminUrl = buildEventUrl('admin');
+      ids('adminLinkOutput').value = adminUrl;
+      ids('copyAdminLink').disabled = !adminUrl;
+      renderHelperQr(state.eventAccess?.role === 'admin' ? shareUrl : '');
+    }
+
+    function buildEventUrl(role) {
+      const access = state.eventAccess;
+      if (!access || access.role !== 'admin' || window.location.protocol === 'file:') return '';
+      const key = role === 'admin' ? access.token : access.helperToken;
+      if (!key) return '';
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.searchParams.set('event', access.eventId);
+      url.searchParams.set('api', access.apiUrl);
+      url.searchParams.set('tab', role === 'admin' ? 'dashboard' : 'scanner');
+      url.hash = new URLSearchParams({ key }).toString();
+      return url.toString();
+    }
+
+    function renderHelperQr(link) {
+      const box = ids('helperQr');
+      if (box.dataset?.link === link) return;
+      box.innerHTML = '';
+      box.style.display = 'none';
+      ids('helperQrStatus').textContent = '';
+      if (box.dataset) box.dataset.link = link;
+      if (!link) return;
+      try {
+        if (!window.QRCode) throw new Error('QR generator unavailable; use the helper link instead.');
+        new window.QRCode(box, { text: link, width: 240, height: 240, correctLevel: window.QRCode.CorrectLevel.M });
+        box.style.display = 'block';
+        ids('helperQrStatus').textContent = 'Helpers scan this access QR on Eve\'s phone with their iPhone Camera to open the app. Inside the app, scan students\' ticket barcodes. Allow camera access when prompted.';
+      } catch (err) {
+        ids('helperQrStatus').textContent = err.message;
+      }
+    }
+
+    function getEventAccessFromUrl() {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has('event')) return null;
+      const eventId = url.searchParams.get('event');
+      const apiUrl = url.searchParams.get('api');
+      const token = new URLSearchParams(url.hash.slice(1)).get('key');
+      if (!eventId || !/^[a-zA-Z0-9-]{1,80}$/.test(eventId) || !/^[a-f0-9]{64}$/.test(token || '')) throw new Error('Invalid private dance link key.');
+      const api = new URL(apiUrl);
+      if (api.protocol !== 'https:') throw new Error('Invalid private dance endpoint.');
+      return { eventId, apiUrl, token, role: 'pending' };
+    }
+
+    async function eventRequest(action, access, payload = {}) {
+      const res = await fetch(access.apiUrl, { method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ revision: access.revision, ...payload, action, eventId: access.eventId, token: access.token }) });
+      const data = await parseApiResponse(res);
+      if (data?.error) throw new Error(String(data.error));
+      return data;
+    }
+
+    function validateEventResponse(data, access) {
+      if (!data || (access.eventId && data.eventId !== access.eventId) || !/^[a-zA-Z0-9-]{1,80}$/.test(data.eventId || '') ||
+          !['admin', 'helper'].includes(data.role) || !Number.isSafeInteger(data.revision) || data.revision < 1) {
+        throw new Error('Server did not confirm the shared dance. Redeploy the updated Apps Script backend.');
+      }
+      if (data.role === 'admin' && !/^[a-f0-9]{64}$/.test(data.helperToken || '')) throw new Error('Server did not confirm the helper link.');
+      const config = validateSharedConfig(data.config);
+      if (config.apiUrl !== access.apiUrl) throw new Error('Shared dance endpoint mismatch.');
+      return config;
+    }
+
+    async function loadEventFromUrl() {
+      const requestId = ++state.eventRequestId;
+      state.eventLoading = true;
+      try {
+        const access = getEventAccessFromUrl();
+        if (!access) return false;
+        renderRosterStatus('Loading dance and current roster...');
+        const data = await eventRequest('getEvent', access);
+        if (requestId !== state.eventRequestId) return false;
+        const config = validateEventResponse(data, access);
+        state.eventAccess = { ...access, role: data.role, revision: data.revision, helperToken: data.helperToken };
+        applyConfig(config, { persistCurrent: false });
+        ids('eventLinkStatus').textContent = 'Shared dance loaded. No device setup required.';
+        state.eventLoading = false;
+        setTab(data.role === 'admin' ? getInitialTabFromUrl() : 'scanner', { skipSync: true });
+        return await loadRoster({ silent: true });
+      } catch (err) {
+        if (requestId !== state.eventRequestId) return false;
+        state.config = null;
+        state.rows = [];
+        state.rosterLoaded = false;
+        state.rosterError = toFriendlyError(err).message;
+        renderRosterStatus(`Dance unavailable: ${state.rosterError}. Scanning is paused.`);
+        renderDashboard();
+        return false;
+      } finally {
+        if (requestId === state.eventRequestId) state.eventLoading = false;
+        updateSharedModeUi();
+      }
+    }
+
+    function newPrivateLinkKey() {
+      return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function publishSharedEvent() {
+      if (state.eventSaving || state.eventLoading || state.admissionInFlight || state.testModePending) return;
+      if (state.eventAccess && state.eventAccess.role !== 'admin') return;
+      if (window.location.protocol === 'file:') {
+        ids('eventLinkStatus').textContent = 'Open the published HTTPS app to create usable phone links.';
+        return;
+      }
+      state.eventSaving = true;
+      ids('publishEvent').disabled = true;
+      try {
+        const config = validateSharedConfig(getConfigFromInputs());
+        const access = state.eventAccess || { apiUrl: config.apiUrl };
+        if (state.eventAccess && config.apiUrl !== access.apiUrl) throw new Error('Use a new deployment for a different backend. Keep this dance\'s endpoint unchanged.');
+        // Retain bootstrap keys after a lost response so retry recovers the same save.
+        if (!state.eventAccess && !state.eventBootstrapKeys) state.eventBootstrapKeys = { adminToken: newPrivateLinkKey(), helperToken: newPrivateLinkKey() };
+        const data = await eventRequest('saveEvent', access, { config, revision: access.revision, ...(!state.eventAccess ? state.eventBootstrapKeys : {}) });
+        if (data.role !== 'admin') throw new Error('Server did not confirm admin access.');
+        const saved = validateEventResponse(data, access);
+        state.eventAccess = { eventId: data.eventId, apiUrl: access.apiUrl, token: access.token || state.eventBootstrapKeys.adminToken,
+          helperToken: data.helperToken, role: data.role, revision: data.revision };
+        applyConfig(saved, { persistCurrent: false });
+        window.history?.replaceState(null, '', buildEventUrl('admin'));
+        ids('eventLinkStatus').textContent = 'Shared dance saved. Keep Eve\'s admin URL private; share only the helper QR or check-in link.';
+      } catch (err) {
+        ids('eventLinkStatus').textContent = `Shared dance not confirmed: ${toFriendlyError(err).message}`;
+      } finally {
+        state.eventSaving = false;
+        ids('publishEvent').disabled = false;
+      }
     }
 
     function updateProfileSelect(selectedName = '') {
@@ -628,8 +853,20 @@
 
     function applyConfig(cfg, options = {}) {
       if (!cfg) return;
-      const normalizedCfg = options.forceTestModeOff === false ? cfg : coerceConfigTestModeOff(cfg);
+      const normalizedCfg = normalizeConfigTestMode(cfg);
+      const rosterChanged = rosterConfigKey(state.config) !== rosterConfigKey(normalizedCfg);
+      if (rosterChanged) {
+        state.rosterRequestId += 1;
+        state.rosterLoaded = false;
+        state.rosterError = '';
+        state.rows = [];
+        state.testModeRequestId += 1;
+        state.testModePending = false;
+        state.testModeSyncError = '';
+        renderRosterStatus('Roster not loaded yet.');
+      }
       state.config = normalizedCfg;
+      if (rosterChanged) renderDashboard();
       fillInputsFromConfig(normalizedCfg);
 
       if (options.persistCurrent !== false) {
@@ -654,8 +891,10 @@
     }
 
     function isSharedLinkMode() {
+      if (state.eventAccess) return state.eventAccess.role !== 'admin';
       try {
-        return Boolean(new URL(window.location.href).searchParams.get('setup'));
+        const params = new URL(window.location.href).searchParams;
+        return params.has('setup') || params.has('event');
       } catch {
         return false;
       }
@@ -664,21 +903,18 @@
     function updateSharedModeUi() {
       const sharedMode = isSharedLinkMode();
       ids('setupTabButton').classList.toggle('hidden', sharedMode);
+      ids('appInstructions').textContent = sharedMode
+        ? 'Your dance and roster load automatically. Tap Start camera scan and allow camera access.'
+        : 'Admin view: configure the dance once, keep Eve\'s admin URL private, and share only the helpers\' QR.';
       if (sharedMode && !ids('setup').classList.contains('hidden')) {
         setTab('scanner', { bypassLock: true });
       }
     }
 
     function getSharedConfigFromUrl() {
-      try {
-        const url = new URL(window.location.href);
-        const encodedConfig = url.searchParams.get('setup');
-        if (!encodedConfig) return null;
-        return decodeConfigFromUrl(encodedConfig);
-      } catch (err) {
-        console.error(err);
-        return null;
-      }
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has('setup')) return null;
+      return decodeConfigFromUrl(url.searchParams.get('setup'), url.searchParams.get('v') || '');
     }
 
     function getInitialTabFromUrl() {
@@ -691,6 +927,10 @@
     }
 
     function saveConfig(options = {}) {
+      if (state.eventAccess) {
+        if (!options.silent) toast('Use Save shared dance to update setup on every device.');
+        return state.config;
+      }
       const cfg = getConfigFromInputs();
       if (!cfg.apiUrl || !cfg.sheetUrl || !cfg.firstNameCol || !cfg.lastNameCol || !cfg.qrCol || !cfg.eventName) {
         if (!options.silent) {
@@ -711,28 +951,66 @@
 
     async function setGlobalTestMode(enabled, options = {}) {
       const cfg = state.config || getConfigFromInputs();
+      if (state.admissionInFlight || state.testModePending) {
+        ids('testMode').checked = Boolean(cfg.testMode);
+        toast(state.testModePending ? 'Wait for the current mode change to be confirmed.' : 'Finish the current scan before changing test mode.', false);
+        return false;
+      }
+      const previousMode = parseTestMode(cfg.testMode);
+      const requestId = ++state.testModeRequestId;
+      const configKey = rosterConfigKey(cfg);
+      const isCurrent = () => requestId === state.testModeRequestId && configKey === rosterConfigKey(state.config || getConfigFromInputs());
+      state.testModeSyncError = '';
+      syncEffectiveTestMode(enabled, { force: true });
       if (!cfg?.apiUrl || !cfg?.sheetUrl || !cfg?.sheetName) {
-        syncEffectiveTestMode(enabled);
         return;
       }
 
+      state.testModePending = true;
+      updateTestModeUi();
       try {
-        const data = await callApi('setTestMode', { testMode: enabled });
-        const effective = Boolean(data?.testMode);
-        syncEffectiveTestMode(effective);
-        if (!options.silent) {
-          toast(data?.message || `Test mode ${effective ? 'enabled' : 'disabled'} globally.`);
+        const data = await callApi('setTestMode', { testMode: enabled }, 'POST', cfg);
+        if (!isCurrent()) return false;
+        if (data?.error) throw new Error(String(data.error));
+        if (typeof data?.testMode !== 'boolean' || data.testMode !== enabled) {
+          throw new Error('The server did not confirm the requested global test mode.');
         }
+        state.testModePending = false;
+        syncEffectiveTestMode(data.testMode, { force: true });
+        if (!options.silent) {
+          toast(data?.message || `Test mode ${data.testMode ? 'enabled' : 'disabled'} globally.`);
+        }
+        return true;
       } catch (err) {
-        syncEffectiveTestMode(enabled);
-        if (!options.silent) {
-          toast(toFriendlyError(err).message, false);
-        }
+        if (!isCurrent()) return false;
+        state.testModePending = false;
+        state.testModeSyncError = toFriendlyError(err).message;
+        syncEffectiveTestMode(enabled ? true : previousMode, { force: true });
+        if (!options.silent) toast(state.testModeSyncError, false);
+        return false;
       }
     }
 
     function loadSavedConfig() {
-      const sharedConfig = getSharedConfigFromUrl();
+      if (new URL(window.location.href).searchParams.has('event')) {
+        state.config = null;
+        state.rows = [];
+        state.rosterLoaded = false;
+        updateSharedModeUi();
+        return;
+      }
+      let sharedConfig;
+      try {
+        sharedConfig = getSharedConfigFromUrl();
+      } catch (err) {
+        state.config = null;
+        state.rows = [];
+        state.rosterLoaded = false;
+        state.rosterError = `Invalid shared setup: ${toFriendlyError(err).message}`;
+        renderRosterStatus(state.rosterError);
+        toast(state.rosterError, false);
+        return;
+      }
       if (sharedConfig) {
         rememberProfile(sharedConfig);
         applyConfig(sharedConfig, {
@@ -772,6 +1050,7 @@
     }
 
     function loadSelectedProfile() {
+      if (state.eventAccess) { toast('Open the original setup page to select a different local dance.', false); return; }
       const profileName = ids('setupProfileSelect').value;
       const profiles = getProfiles();
       const cfg = profiles[profileName];
@@ -853,6 +1132,7 @@
     async function callApi(action, payload = {}, method = 'POST', configOverride = null) {
       const cfg = configOverride || state.config || getConfigFromInputs();
       if (!cfg?.apiUrl) throw new Error('Missing Apps Script URL in setup.');
+      if (state.eventAccess) return eventRequest(action, state.eventAccess, payload);
 
       if (method === 'GET') {
         const url = new URL(cfg.apiUrl);
@@ -909,12 +1189,14 @@
           return null;
         }
 
+        if (parsedValue.error) throw new Error(String(parsedValue.error));
         for (const key of likelyArrayKeys) {
-          const child = parseMaybeJson(parsedValue[key]);
-          if (Array.isArray(child)) return child;
+          const match = findRows(parsedValue[key], depth + 1);
+          if (Array.isArray(match)) return match;
         }
 
         for (const nested of Object.values(parsedValue)) {
+          if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue;
           const match = findRows(nested, depth + 1);
           if (Array.isArray(match)) return match;
         }
@@ -922,7 +1204,7 @@
         return null;
       }
 
-      return findRows(data) || [];
+      return findRows(data);
     }
 
     function extractBackendMessage(data) {
@@ -1017,8 +1299,16 @@
       return '';
     }
 
-    function normalizeRows(rows) {
-      const cfg = state.config;
+    function readTicketValue(row, cfg) {
+      const keys = Object.keys(row || {}).filter(key => normalizeKey(key) === normalizeKey(cfg.qrCol));
+      if (keys.length > 1) throw new Error('Ambiguous QR_ID column headers in the response.');
+      const value = keys.length ? row[keys[0]] : '';
+      if (value == null) return '';
+      if (typeof value !== 'string') throw new Error('QR_ID values must be strings to preserve leading zeros.');
+      return value.trim();
+    }
+
+    function normalizeRows(rows, cfg = state.config) {
       const objectRows = toObjectRows(rows);
 
       return objectRows.map((r) => {
@@ -1030,7 +1320,7 @@
           name: `${first} ${last}`.trim(),
           first,
           last,
-          qr: readRowValue(r, cfg.qrCol, ['QR_ID', 'QR', 'qr']),
+          qr: readTicketValue(r, cfg),
           status: readRowValue(r, cfg.statusCol, ['Status']) || 'Missing',
           guestValue,
           bringingGuest: isGuestFlagEnabled(guestValue),
@@ -1044,57 +1334,84 @@
       return ['yes', 'y', 'true', '1'].includes(normalized);
     }
 
-    async function loadRoster(options = {}) {
-      try {
-        const cfg = saveConfig({ silent: true });
-        if (!cfg) return;
-        let data;
-        let rows = [];
-        try {
-          data = await callApi('list', {}, 'GET');
-          rows = extractRowsFromResponse(data);
+    function rosterConfigKey(cfg) {
+      return cfg ? JSON.stringify([
+        cfg.apiUrl, cfg.sheetUrl, cfg.sheetName, cfg.eventName, cfg.firstNameCol,
+        cfg.lastNameCol, cfg.qrCol, cfg.statusCol, cfg.admittedAtCol, cfg.guestCol,
+        cfg.admittedValue, cfg.timeZone,
+      ]) : '';
+    }
 
-          if (!rows.length) {
-            console.warn('GET list returned zero rows, retrying with POST list.', data);
-            const postData = await callApi('list', {});
-            const postRows = extractRowsFromResponse(postData);
-            if (postRows.length) {
-              data = postData;
-              rows = postRows;
-            } else {
-              data = postData;
-            }
-          }
-        } catch (err) {
-          console.warn('GET list failed, retrying with POST list.', err);
-          data = await callApi('list', {});
-          rows = extractRowsFromResponse(data);
+    function renderRosterStatus(message) {
+      for (const id of ['scannerRosterStatus', 'dashboardRosterStatus']) {
+        const target = ids(id);
+        if (target) target.textContent = message;
+      }
+    }
+
+    function validateRosterResponse(data, cfg) {
+      const rows = extractRowsFromResponse(data);
+      if (!Array.isArray(rows)) throw new Error('The server did not return a recognized roster.');
+      if (rows.length) {
+        const objects = toObjectRows(rows);
+        if (rows.some(row => !row || typeof row !== 'object') ||
+            objects.some(row => !row || Array.isArray(row) ||
+              !Object.keys(row).some(key => normalizeKey(key) === normalizeKey(cfg.qrCol)))) {
+          throw new Error('Roster records are missing the configured QR_ID column.');
         }
+      }
+      return rows;
+    }
+
+    async function loadRoster(options = {}) {
+      let requestId;
+      let configKey;
+      const isCurrent = () => requestId === state.rosterRequestId && configKey === rosterConfigKey(state.config);
+      try {
+        if (state.eventLoading || state.eventSaving) return false;
+        if (state.eventAccess) {
+          const access = state.eventAccess;
+          const eventData = await eventRequest('getEvent', access);
+          if (state.eventAccess !== access) return false;
+          const latest = validateEventResponse(eventData, access);
+          state.eventAccess = { ...access, role: eventData.role, revision: eventData.revision, helperToken: eventData.helperToken };
+          if (rosterConfigKey(latest) !== rosterConfigKey(state.config)) applyConfig(latest, { persistCurrent: false });
+        }
+        const cfg = saveConfig({ silent: true });
+        if (!cfg) return false;
+        configKey = rosterConfigKey(cfg);
+        requestId = ++state.rosterRequestId;
+        let data;
+        let rows;
+        try {
+          data = await callApi('list', {}, 'GET', cfg);
+          if (!isCurrent()) return false;
+          rows = validateRosterResponse(data, cfg);
+        } catch (err) {
+          if (!isCurrent()) return false;
+          data = await callApi('list', {}, 'POST', cfg);
+          if (!isCurrent()) return false;
+          rows = validateRosterResponse(data, cfg);
+        }
+        if (!isCurrent()) return false;
         if (data && Object.prototype.hasOwnProperty.call(data, 'testMode')) {
           syncEffectiveTestMode(data.testMode);
         }
-        state.rows = normalizeRows(rows);
+        state.rows = normalizeRows(rows, cfg);
+        state.rosterLoaded = true;
+        state.rosterError = '';
+        renderRosterStatus(state.rows.length ? `Roster: ${state.rows.length} student${state.rows.length === 1 ? '' : 's'}.` : 'No students on the roster.');
         renderDashboard();
-
-        if (!state.rows.length) {
-          const cfg = state.config || getConfigFromInputs();
-          const backendMessage = extractBackendMessage(data);
-          if (!options.silent) {
-            toast(
-              backendMessage || `No students were returned. Confirm the "${cfg.sheetName}" tab exists, the Apps Script can access the sheet, and the configured column headers exactly match the sheet.`,
-              false
-            );
-          }
-          return;
-        }
-
         if (!options.silent) {
-          toast(`Loaded ${state.rows.length} students.`);
+          toast(state.rows.length ? `Loaded ${state.rows.length} students.` : 'No students on the roster.', Boolean(state.rows.length));
         }
+        return true;
       } catch (err) {
-        if (!options.silent) {
-          toast(toFriendlyError(err).message, false);
-        }
+        if (requestId !== undefined && !isCurrent()) return false;
+        state.rosterError = toFriendlyError(err).message;
+        renderRosterStatus(`Roster unavailable: ${state.rosterError}. Admissions paused; displayed rows may be stale.`);
+        if (!options.silent) toast(state.rosterError, false);
+        return false;
       }
     }
 
@@ -1130,7 +1447,7 @@
       );
 
       body.innerHTML = filtered.map((r) => {
-        const statusClass = String(r.status).toLowerCase().includes('admit')
+        const statusClass = normalizeKey(r.status) === normalizeKey(state.config?.admittedValue || 'Admitted')
           ? 'status-admitted'
           : 'status-missing';
         const guestBadge = r.bringingGuest
@@ -1147,7 +1464,7 @@
       }).join('');
 
       const total = state.rows.length;
-      const admitted = state.rows.filter(r => String(r.status).toLowerCase().includes('admit')).length;
+      const admitted = state.rows.filter(r => normalizeKey(r.status) === normalizeKey(state.config?.admittedValue || 'Admitted')).length;
       const guestCount = state.rows.filter(r => r.bringingGuest).length;
       const missing = total - admitted;
 
@@ -1202,7 +1519,7 @@
             <div class="scan-meta-value">${escapeHtml(status || '-')}</div>
           </div>
           <div class="scan-meta-card">
-            <div class="scan-meta-label">QR</div>
+            <div class="scan-meta-label">Ticket / QR</div>
             <div class="scan-meta-value">${escapeHtml(qrValue || '-')}</div>
           </div>
           <div class="scan-meta-card">
@@ -1239,6 +1556,7 @@
       state.isProcessingScan = false;
       state.lastDetectedQrValue = '';
       state.lastDetectedAt = 0;
+      state.nextScanAt = 0;
     }
 
     function isLegacyBlankStatusAdmitError(message) {
@@ -1265,17 +1583,9 @@
     }
 
     function findCanonicalScanRow(responseRow, scannedQrValue, matchedQrValue = '') {
-      const normalizedScanned = normalizeKey(scannedQrValue);
-      const normalizedMatched = normalizeKey(matchedQrValue);
-      const normalizedRowNumber = String(responseRow?._rowNumber || '').trim();
-
-      return state.rows.find((entry) => {
-        if (!entry) return false;
-        if (normalizedMatched && normalizeKey(entry.qr) === normalizedMatched) return true;
-        if (normalizedScanned && normalizeKey(entry.qr) === normalizedScanned) return true;
-        if (normalizedRowNumber && String(entry.raw?._rowNumber || '').trim() === normalizedRowNumber) return true;
-        return false;
-      }) || null;
+      const ticket = String(matchedQrValue || scannedQrValue || '').trim();
+      const matches = ticket ? state.rows.filter(entry => entry.qr === ticket) : [];
+      return matches.length === 1 ? matches[0] : null;
     }
 
     function getScanDisplayQrValue(row, cfg, scannedQrValue, matchedQrValue = '') {
@@ -1292,7 +1602,7 @@
         : '';
       if (directValue) return directValue;
 
-      const fallbackValue = readRowValue(row, cfg.qrCol, ['QR_ID', 'QR', 'qr']);
+      const fallbackValue = readTicketValue(row, cfg);
       if (fallbackValue) return String(fallbackValue).trim();
 
       return String(scannedQrValue || '').trim();
@@ -1308,16 +1618,53 @@
     }
 
     async function admitByQr(qrValue, options = {}) {
-      if (!qrValue) return toast('Missing QR value.', false);
+      qrValue = typeof qrValue === 'string' ? qrValue.trim() : '';
+      if (state.admissionInFlight) return;
+      state.admissionInFlight = true;
       setScreenAlert('idle');
       try {
+        if (!qrValue) throw new Error('Missing QR value.');
+        if (!state.config) throw new Error('Select a dance setup before scanning.');
+        if (state.eventLoading || state.eventSaving) throw new Error('Dance setup update in progress. Scanning is paused.');
+        if (state.testModePending) throw new Error('Global mode change awaiting confirmation. Scanning is paused.');
+        const requestedTestMode = parseTestMode(state.config.testMode);
+        if (state.testModeSyncError && !requestedTestMode) throw new Error('Global mode update is unconfirmed. Live scanning is paused; retry the mode change.');
+        const configKey = rosterConfigKey(state.config);
+        if (requestedTestMode || !state.rosterLoaded || state.rosterError) await loadRoster({ silent: true });
+        if (!state.rosterLoaded || state.rosterError) throw new Error(state.rosterError || 'Roster is not loaded. Refresh the roster before scanning.');
+        if (configKey !== rosterConfigKey(state.config)) throw new Error('Dance setup changed. Please scan again.');
+        let matches = state.rows.filter(entry => entry.qr === qrValue);
+        if (!matches.length) {
+          await loadRoster({ silent: true });
+          if (state.rosterError || configKey !== rosterConfigKey(state.config)) throw new Error(state.rosterError || 'Dance setup changed. Please scan again.');
+          matches = state.rows.filter(entry => entry.qr === qrValue);
+        }
+        if (matches.length > 1) throw new Error('Duplicate QR_ID on the roster. Resolve the duplicate before admission.');
+        if (matches.length && (requestedTestMode || parseTestMode(state.config.testMode))) {
+          // A test is a read-only roster lookup, never a write-capable admit request.
+          const student = matches[0];
+          const alreadyAdmitted = normalizeKey(student.status) === normalizeKey(state.config.admittedValue);
+          setManualQrValue(student.qr);
+          updateScannerGuestFlag(student.bringingGuest, student.guestValue || 'No');
+          setScreenAlert(alreadyAdmitted ? 'error' : 'warning');
+          renderScanResultCard({ stateClass: alreadyAdmitted ? 'scan-state-already' : 'scan-state-test',
+            kicker: alreadyAdmitted ? 'Already Scanned' : 'Test Scan Only', name: student.name || 'Student found',
+            detail: 'Read-only roster lookup. No attendance update was requested.' +
+              (!state.config.testMode ? ' Global live mode now applies to the next scan.' : ''),
+            status: student.status, qrValue: student.qr, admittedAt: student.admittedAt });
+          toast(`Tested: ${student.name || student.qr}`);
+          return;
+        }
         const admitConfig = {
           ...(state.config || getConfigFromInputs()),
           allowedStatuses: [],
           testMode: false,
         };
-        const res = await callApi('admit', { qrValue }, 'POST', admitConfig);
+        const res = matches.length ? await callApi('admit', { qrValue }, 'POST', admitConfig) : {};
+        if (configKey !== rosterConfigKey(state.config)) throw new Error('Dance setup changed during admission. Verify attendance before rescanning.');
+        if (res?.error) throw new Error(String(res.error));
         const row = res.row || null;
+        if (matches.length && !row) throw new Error('The server did not confirm this admission. Verify attendance before rescanning.');
         if (!row) {
           const probableNameMatch = findProbableNameMatch(qrValue);
           const isAutomaticSource = options.source === 'camera' || options.source === 'photo';
@@ -1348,11 +1695,15 @@
         }
 
         const cfg = state.config;
+        const returnedQr = readTicketValue(row, cfg);
+        if (returnedQr !== qrValue || (res.matchedQrValue != null && String(res.matchedQrValue).trim() !== qrValue)) {
+          throw new Error('The server returned a different QR_ID. Verify attendance before rescanning.');
+        }
         const canonicalScanRow = findCanonicalScanRow(row, qrValue, res?.matchedQrValue);
         const displayName = canonicalScanRow?.name
           || `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
-        const statusValue = readRowValue(row, cfg.statusCol, ['Status']) || canonicalScanRow?.status || 'Missing';
-        const admittedAtValue = readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || canonicalScanRow?.admittedAt || '';
+        const statusValue = readRowValue(row, cfg.statusCol, ['Status']) || 'Missing';
+        const admittedAtValue = readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '';
         const qrDisplayValue = getScanDisplayQrValue(row, cfg, qrValue, res?.matchedQrValue);
         const guestValue = readRowValue(row, cfg.guestCol, ['Bringing Guest', 'Guest', 'bringing_guest']) || canonicalScanRow?.guestValue || '';
         const bringingGuest = isGuestFlagEnabled(guestValue);
@@ -1360,12 +1711,17 @@
         if (Object.prototype.hasOwnProperty.call(res || {}, 'testMode')) {
           syncEffectiveTestMode(res.testMode);
         }
-        const isTestMode = Boolean((Object.prototype.hasOwnProperty.call(res || {}, 'testMode') ? res.testMode : cfg?.testMode));
+        const isTestMode = Object.prototype.hasOwnProperty.call(res || {}, 'testMode') ? parseTestMode(res.testMode) : false;
         updateScannerGuestFlag(bringingGuest, guestValue || 'No');
 
-        const alreadyAdmitted = String(res?.message || '').toLowerCase().includes('already marked as admitted');
+        const alreadyAdmitted = res.alreadyAdmitted === true || String(res?.message || '').toLowerCase().includes('already marked as admitted');
         const blocked = Boolean(res?.error);
         const legacyBlankStatusError = isLegacyBlankStatusAdmitError(res?.error);
+
+        if (!blocked && !isTestMode &&
+            (normalizeKey(statusValue) !== normalizeKey(cfg.admittedValue) || (!alreadyAdmitted && !admittedAtValue))) {
+          throw new Error('Admission was not confirmed by the returned status and timestamp. Verify attendance before rescanning.');
+        }
 
         if (blocked) {
           setScreenAlert('error');
@@ -1431,7 +1787,14 @@
         }
         toast(`${alreadyAdmitted ? 'Already admitted' : isTestMode ? 'Tested' : 'Admitted'}: ${displayName || qrValue}`);
       } catch (err) {
-        toast(toFriendlyError(err).message, false);
+        const message = toFriendlyError(err).message;
+        updateScannerGuestFlag(false, '');
+        setScreenAlert('error');
+        renderScanResultCard({ stateClass: 'scan-state-blocked', kicker: 'Cannot Admit',
+          name: 'Admission not confirmed', detail: message, status: 'Not confirmed', qrValue, admittedAt: '' });
+        toast(message, false);
+      } finally {
+        state.admissionInFlight = false;
       }
     }
 
@@ -1440,20 +1803,19 @@
       setScreenAlert('idle');
       resetScanDeduping();
       const video = ids('video');
+      state.nextDecodeAt = 0;
 
       if (!navigator.mediaDevices?.getUserMedia) {
         toast('Live camera scanning is not available on this device. Use Scan from photo or manual entry.', false);
         return;
       }
 
-      if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function') {
-        toast('Camera scanning is not supported on this device. Use manual QR entry.', false);
+      if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
+        toast('Scan decoders are unavailable. Reload the app or use manual ticket entry.', false);
         return;
       }
 
-      state.detector = 'BarcodeDetector' in window
-        ? new BarcodeDetector({ formats: ['qr_code'] })
-        : null;
+      await initializeCodeDetector();
       try {
         state.stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -1480,7 +1842,7 @@
 
       const loop = async () => {
         if (!state.scanning) return;
-        if (state.isProcessingScan) {
+        if (state.isProcessingScan || Date.now() < state.nextScanAt) {
           state.scanLoopId = requestAnimationFrame(loop);
           return;
         }
@@ -1510,6 +1872,8 @@
             await admitByQr(normalizedValue, { source: 'camera' });
 
             if (shouldKeepScannerOpen() && state.stream) {
+              // Leave a full second to read the result before accepting any next code.
+              state.nextScanAt = Date.now() + 1000;
               state.isProcessingScan = false;
               state.scanLoopId = requestAnimationFrame(loop);
             } else {
@@ -1540,12 +1904,80 @@
       ids('video').srcObject = null;
     }
 
+    async function initializeCodeDetector() {
+      state.detector = null;
+      let formats = [];
+      if (typeof window.BarcodeDetector === 'function') {
+        try {
+          const wanted = ['qr_code', 'code_128'];
+          const supported = typeof window.BarcodeDetector.getSupportedFormats === 'function'
+            ? await window.BarcodeDetector.getSupportedFormats() : wanted;
+          formats = wanted.filter(format => supported.includes(format));
+          if (formats.length) state.detector = new window.BarcodeDetector({ formats });
+        } catch (err) {
+          console.warn('Native barcode decoder unavailable; using software decoding.', err);
+          formats = [];
+        }
+      }
+      const barcodeReady = formats.includes('code_128') || Boolean(window.ZXing?.MultiFormatReader);
+      ids('scannerDecoderStatus').textContent = barcodeReady
+        ? 'Ready for Code 128 ticket barcodes and QR codes. Scan one ticket at a time.'
+        : 'Ticket barcode decoder unavailable. Reload the app or enter the exact ticket number manually.';
+    }
+
     function ensureScanCanvas() {
       if (!state.scanCanvas) {
         state.scanCanvas = document.createElement('canvas');
         state.scanContext = state.scanCanvas.getContext('2d', { willReadFrequently: true });
       }
       return state.scanCanvas;
+    }
+
+    function decodeCodePixels(image) {
+      if (typeof window.jsQR === 'function') {
+        const qr = window.jsQR(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' });
+        if (qr?.data) return qr.data;
+      }
+      const zxing = window.ZXing;
+      if (!zxing?.MultiFormatReader) return '';
+      if (!state.softwareBarcodeReader) {
+        const reader = new zxing.MultiFormatReader();
+        const hints = new Map();
+        const formats = [zxing.BarcodeFormat.CODE_128];
+        if (typeof window.jsQR !== 'function') formats.push(zxing.BarcodeFormat.QR_CODE);
+        hints.set(zxing.DecodeHintType.POSSIBLE_FORMATS, formats);
+        hints.set(zxing.DecodeHintType.TRY_HARDER, true);
+        reader.setHints(hints);
+        state.softwareBarcodeReader = reader;
+      }
+      const luminances = new Uint8ClampedArray(image.width * image.height);
+      for (let pixel = 0, offset = 0; pixel < luminances.length; pixel++, offset += 4) {
+        const gray = (image.data[offset] + 2 * image.data[offset + 1] + image.data[offset + 2]) / 4;
+        const alpha = image.data[offset + 3] / 255;
+        luminances[pixel] = gray * alpha + 255 * (1 - alpha);
+      }
+      const decode = (pixels, width, height) => {
+        try {
+          const source = new zxing.RGBLuminanceSource(pixels, width, height);
+          const bitmap = new zxing.BinaryBitmap(new zxing.HybridBinarizer(source));
+          return state.softwareBarcodeReader.decodeWithState(bitmap).getText();
+        } catch (err) {
+          if (err instanceof zxing.NotFoundException || err instanceof zxing.ChecksumException || err instanceof zxing.FormatException) return '';
+          throw err;
+        } finally {
+          state.softwareBarcodeReader.reset();
+        }
+      };
+      const value = decode(luminances, image.width, image.height);
+      if (value) return value;
+      // RGBLuminanceSource cannot rotate; retry sideways tickets explicitly.
+      const rotated = new Uint8ClampedArray(luminances.length);
+      for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+          rotated[x * image.height + image.height - 1 - y] = luminances[y * image.width + x];
+        }
+      }
+      return decode(rotated, image.height, image.width);
     }
 
     function waitForVideoReady(video) {
@@ -1572,19 +2004,25 @@
       if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
         return '';
       }
+      if (Date.now() < state.nextDecodeAt) return '';
+      state.nextDecodeAt = Date.now() + 150;
 
       if (state.detector) {
+        let codes;
         try {
-          const codes = await state.detector.detect(video);
-          if (codes[0]?.rawValue) {
-            return codes[0].rawValue;
-          }
+          codes = await state.detector.detect(video);
         } catch (err) {
           console.warn(err);
         }
+        const values = [...new Set((codes || []).map(code => code.rawValue).filter(Boolean))];
+        if (values.length > 1) {
+          ids('scannerDecoderStatus').textContent = 'Multiple codes visible. Scan one ticket at a time.';
+          throw new Error('Scan one ticket at a time. Multiple codes are visible.');
+        }
+        if (values.length === 1) return values[0];
       }
 
-      if (typeof window.jsQR !== 'function') {
+      if (typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
         return '';
       }
 
@@ -1593,16 +2031,13 @@
       canvas.height = video.videoHeight;
       state.scanContext.drawImage(video, 0, 0, canvas.width, canvas.height);
       const image = state.scanContext.getImageData(0, 0, canvas.width, canvas.height);
-      const code = window.jsQR(image.data, canvas.width, canvas.height, {
-        inversionAttempts: 'attemptBoth',
-      });
-      return code?.data || '';
+      return decodeCodePixels(image);
     }
 
     async function decodeQrFromImageFile(file) {
       if (!file) return '';
-      if (typeof window.jsQR !== 'function') {
-        throw new Error('Photo QR scanning requires jsQR support.');
+      if (typeof window.jsQR !== 'function' && !window.ZXing?.MultiFormatReader) {
+        throw new Error('Photo scanning decoder unavailable. Reload the app or enter the ticket manually.');
       }
 
       const imageUrl = URL.createObjectURL(file);
@@ -1619,10 +2054,7 @@
         canvas.height = img.naturalHeight || img.height;
         state.scanContext.drawImage(img, 0, 0, canvas.width, canvas.height);
         const image = state.scanContext.getImageData(0, 0, canvas.width, canvas.height);
-        const code = window.jsQR(image.data, canvas.width, canvas.height, {
-          inversionAttempts: 'attemptBoth',
-        });
-        return code?.data || '';
+        return decodeCodePixels(image);
       } finally {
         URL.revokeObjectURL(imageUrl);
       }
@@ -1635,12 +2067,20 @@
         if (!rawValue) {
           setManualQrValue('');
           setScreenAlert('error');
-          toast('No QR code was found in that photo.', false);
+          renderScanResultCard({ stateClass: 'scan-state-blocked', kicker: 'Cannot Read Ticket',
+            name: 'No code found', detail: 'Use a clear photo of one ticket, with the entire barcode visible.',
+            status: 'Not checked in', qrValue: '', admittedAt: '' });
+          toast('No ticket barcode or QR code was found. Use a clear photo of one ticket, with the entire barcode visible.', false);
           return;
         }
         await admitByQr(rawValue.trim(), { source: 'photo' });
       } catch (err) {
         console.warn(err);
+        setManualQrValue('');
+        setScreenAlert('error');
+        renderScanResultCard({ stateClass: 'scan-state-blocked', kicker: 'Cannot Scan Ticket',
+          name: 'Photo scan failed', detail: toFriendlyError(err).message,
+          status: 'Not checked in', qrValue: '', admittedAt: '' });
         toast(toFriendlyError(err).message, false);
       }
     }
@@ -1673,7 +2113,7 @@
         ids(id).classList.toggle('hidden', id !== tab);
       });
 
-      if ((tab === 'dashboard' || tab === 'scanner') && state.config) {
+      if ((tab === 'dashboard' || tab === 'scanner') && state.config && !options.skipSync) {
         triggerRosterSync();
       }
     }
@@ -1687,6 +2127,11 @@
       ids('assignQrIds').addEventListener('click', assignMissingQrIds);
       ids('loadProfile').addEventListener('click', loadSelectedProfile);
       ids('copyShareLink').addEventListener('click', copyShareLink);
+      ids('publishEvent').addEventListener('click', publishSharedEvent);
+      ids('copyAdminLink').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(ids('adminLinkOutput').value); toast('Eve\'s private admin link copied.'); }
+        catch { ids('adminLinkOutput').select(); toast('Copy Eve\'s link from the field. Keep it private.', false); }
+      });
       ids('setupProfileSelect').addEventListener('change', loadSelectedProfile);
       ids('testMode').addEventListener('change', () => setGlobalTestMode(ids('testMode').checked));
       ids('refreshBtn').addEventListener('click', loadRoster);
@@ -1707,7 +2152,13 @@
         event.target.value = '';
       });
       ids('manualSubmit').addEventListener('click', () => admitByQr(ids('manualQr').value.trim()));
+      ids('manualQr').addEventListener('keydown', async (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        await admitByQr(ids('manualQr').value.trim());
+      });
       ids('resetConfig').addEventListener('click', () => {
+        if (state.eventAccess) { toast('Shared dance remains saved on the server. Keep the admin link.', false); return; }
         const cfg = state.config || getConfigFromInputs();
         const profiles = getProfiles();
         if (cfg?.eventName && profiles[cfg.eventName]) {
@@ -1716,6 +2167,12 @@
         }
         localStorage.removeItem(CONFIG_STORAGE_KEY);
         state.config = null;
+        state.rosterRequestId += 1;
+        state.rosterLoaded = false;
+        state.rosterError = '';
+        state.rows = [];
+        renderRosterStatus('No dance selected.');
+        renderDashboard();
         setActiveProfile('');
         updateProfileSelect('');
         updateShareLinkOutput(null);
@@ -1737,7 +2194,9 @@
     renderDashboard();
     setTab(getInitialTabFromUrl(), { fallbackTab: 'scanner' });
 
-    if (state.config && getInitialTabFromUrl() !== 'setup') {
+    if (new URL(window.location.href).searchParams.has('event')) {
+      loadEventFromUrl();
+    } else if (state.config && getInitialTabFromUrl() !== 'setup') {
       loadRoster();
     }
   </script>
