@@ -15,6 +15,7 @@ function ui(options = {}) {
     fetch: async (url, init = {}) => {
       if (!init.body) { if (options.registryFail) throw Error('Registry unavailable'); return { ok: true, redirected: !!options.redirected, json: async () => ({ version: 1, endpoints: options.endpoints || [endpoint] }) }; }
       calls.push({ url, body: JSON.parse(init.body) }); if (url !== endpoint) throw Error('REAL NETWORK REFUSED');
+      if (JSON.parse(init.body).action === 'admit') options.onAdmit?.(backend, JSON.parse(init.body));
       return { ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(backend.request(JSON.parse(init.body))) };
     } });
   const html = fs.readFileSync(require.resolve('../../index.html'), 'utf8');

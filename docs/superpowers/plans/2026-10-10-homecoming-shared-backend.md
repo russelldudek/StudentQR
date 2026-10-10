@@ -12,6 +12,18 @@
 
 ## Global Constraints
 
+**Human-approved import amendments:** Russ confirmed printed tickets cannot be
+changed and then explicitly chose `Build mirror with conflicts quarantined`.
+Mirror-only numeric student tickets 0-999 use three-character strings; guest
+literals are not padded. Preparation imports only safe assigned rows and writes
+a separate literal-JSON `Quarantine` sheet for conflicting/incomplete records.
+All members of a conflicting student/guest pair are blocked. Ambiguous numeric
+annotations and padded literals reserve conservative candidate codes solely for
+blocking, never successful matching. This replaces the whole-source validation
+stop in Tasks 4/6; the strict pure projection and production source remain
+unchanged. Binding and snapshot hash include Quarantine; both modes reject its
+tickets and report separate quarantined counts.
+
 - Production source: `1hlWdxxzlP2Zbl9m4_MN49XBgBrL7YiG67ur2p2tEueU`, tab `Ticket Checklist`, header row 5. No source or production attendance writes during this work.
 - Preserve the exact ten-column schema, strict `projectCombinedIntake_`, literal tickets such as `083` and `001B`, and existing explicit-adapter refusals. Never infer padding, host identity, or admission eligibility.
 - Attendance schema: Event ID; Person Type; Ticket ID (JSON); Source Student ID (JSON); Subject Assignment SHA256; Status; Admitted At. Valid stored statuses: Pending and Admitted; Needs Review is a derived quarantine state, never a reset of history.

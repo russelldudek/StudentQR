@@ -27,9 +27,7 @@ function handleRequest_(e, method) {
     rejectDeclaredIntakeAdapter_(request, e, method);
     var homecomingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
     var homecomingBinding = homecomingRaw ? JSON.parse(homecomingRaw) : null;
-    if (typeof HOMECOMING_DEPLOYMENT_KIND_ !== 'undefined' && HOMECOMING_DEPLOYMENT_KIND_ === 'mirror-test' && !homecomingBinding) {
-      throw new Error('Dedicated Homecoming mirror is not ready. Owner initialization required.');
-    }
+    assertDedicatedHomecomingConfigured_(homecomingBinding, readSharedEvent_());
     if (homecomingBinding) assertHomecomingBinding_(homecomingBinding, readSharedEvent_());
     if (homecomingBinding && !readSharedEvent_()) throw new Error('Homecoming is not ready. Owner initialization required.');
     if (action === 'saveevent') return jsonResponse_(saveSharedEvent_(request));
@@ -50,8 +48,10 @@ function handleRequest_(e, method) {
 
     if (homecomingBinding && action === 'list') {
       var homecoming = readHomecomingContext_(homecomingBinding, sharedEvent.eventId);
-      var publicRows = homecomingRows_(homecoming.subjects, homecoming.attendance);
+      var blockedRows = homecomingQuarantineRows_(homecoming.quarantine);
+      var publicRows = homecomingRows_(homecoming.subjects, homecoming.attendance).concat(blockedRows);
       return jsonResponse_({ rows: publicRows, count: publicRows.length, testMode: config.testMode,
+        quarantinedTicketCount: blockedRows.length, quarantinedRecordCount: homecoming.quarantine.recordCount,
         sheetName: config.sheetName, environment: 'mirror-test', rosterMode: 'homecoming-2026' });
     }
     if (homecomingBinding && action === 'assignqrids') throw new Error('Homecoming ticket IDs are fixed. ID assignment is disabled.');
@@ -103,6 +103,13 @@ function readSharedEvent_() {
   return event;
 }
 
+function assertDedicatedHomecomingConfigured_(binding, event) {
+  if (typeof HOMECOMING_DEPLOYMENT_KIND_ !== 'undefined' && HOMECOMING_DEPLOYMENT_KIND_ === 'mirror-test') {
+    if (!binding || !event) throw new Error('Dedicated Homecoming mirror binding or event is missing. Owner initialization required.');
+    assertHomecomingBinding_(binding, event);
+  }
+}
+
 function sharedTokenHash_(token) {
   if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid private link key.');
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token).map(function(byte) {
@@ -152,6 +159,7 @@ function saveSharedEvent_(request) {
     var previous = readSharedEvent_();
     var bindingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
     var binding = bindingRaw ? JSON.parse(bindingRaw) : null;
+    assertDedicatedHomecomingConfigured_(binding, previous);
     if (binding) {
       assertHomecomingBinding_(binding, previous);
       if (!previous) throw new Error('Homecoming bootstrap is owner-only.');
@@ -442,9 +450,10 @@ function admitRow_(config, qrValue, eventRequest) {
       if (latest.revision !== eventRequest.revision) throw new Error('Dance setup changed. Refresh the roster before scanning.');
       config = buildConfig_({ config: latest.config });
       var bindingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
+      assertDedicatedHomecomingConfigured_(bindingRaw ? JSON.parse(bindingRaw) : null, latest);
       if (bindingRaw) {
         var binding = assertHomecomingBinding_(JSON.parse(bindingRaw), latest);
-        return admitHomecomingLocked_(config, binding, qrValue, latest.eventId);
+        return admitHomecomingLocked_(config, binding, qrValue, latest.eventId, eventRequest.expectedAssignmentHash);
       }
     }
     config.testMode = getGlobalTestMode_(config, config.testMode);
@@ -616,7 +625,9 @@ function setTestMode_(config, value, eventRequest) {
       if (latest.revision !== eventRequest.revision) throw new Error('Dance setup changed. Refresh before changing mode.');
       config = buildConfig_({ config: latest.config });
       var bindingRaw = PropertiesService.getScriptProperties().getProperty('studentQrHomecomingBinding');
+      assertDedicatedHomecomingConfigured_(bindingRaw ? JSON.parse(bindingRaw) : null, latest);
       if (bindingRaw) assertHomecomingBinding_(JSON.parse(bindingRaw), latest);
+      if (bindingRaw && typeof value !== 'boolean') throw new Error('Homecoming mode requires an explicit boolean.');
     }
     var enabled = normalizeBoolean_(value), properties = PropertiesService.getScriptProperties();
     var key = getTestModePropertyKey_(config), stored = enabled ? 'true' : 'false';

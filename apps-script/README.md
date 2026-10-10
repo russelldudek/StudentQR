@@ -88,3 +88,23 @@ and attendance integration must be completed before live Homecoming activation.
 - The frontend sends the full sheet configuration with both `GET` and `POST`.
 - New QR IDs are generated with an event-based prefix plus a random suffix, and existing `QR_ID` values are left untouched.
 - If the roster still fails to load, redeploy the script after changes and make sure the copied URL ends in `/exec`, not `/dev`.
+
+## Dedicated Homecoming Mirror
+
+Mirror preparation imports only unambiguous assigned student/guest pairs.
+Conflicting/incomplete pairs go to a separate Quarantine tab; both modes block
+their tickets and report counts. Misplaced personal text and computed ticket
+errors are not copied into mirror identities or public diagnostics. Printed
+ticket numbers and literal guest associations remain unchanged; only numeric
+student values use the approved three-digit mirror import.
+
+Deploy **all three modules** (`Code.gs`, `Homecoming.gs`, `MirrorTest.gs`) into a
+new private mirror-only project, not the existing school form-sync or Prom
+project. Run the owner editor operations described in
+[`docs/homecoming-iphone-test.md`](../docs/homecoming-iphone-test.md).
+
+Including `Homecoming.gs` seals the deployment to mirror mode even when its
+properties are missing or corrupt. Public initialization, legacy bypasses,
+caller-selected targets and ticket-ID assignment are refused. Generic Students
+deployments intentionally use only `Code.gs`; they do not include the mirror
+module.

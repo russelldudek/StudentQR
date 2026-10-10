@@ -105,3 +105,61 @@ test('managed mode change takes admission lock and updates both authoritative st
   assert.equal(f.request({ action: 'setTestMode', token: admin, testMode: true }).testMode, true);
   assert.equal(JSON.parse(f.properties.get('studentQrSharedDance')).config.testMode, true);
 });
+for (const failure of ['write', 'status', 'readback']) {
+  test('injected ' + failure + ' failure never returns success', () => {
+    const f = fixture(); f.ready(); f.fault.fail = failure;
+    const result = f.request({ action: 'admit', qrValue: '083' }); assert(result.error); assert.equal(result.row, undefined);
+    f.fault.fail = '';
+    const result2 = f.request({ action: 'admit', qrValue: '083' });
+    if (failure === 'status') assert.match(result2.error, /Pending/);
+    assert.equal(f.books.get('mirror').getSheetByName('Check-ins').values.length, 2);
+  });
+}
+test('interleaved second scan is refused by lock and final lost response retries as duplicate', () => {
+  const f = fixture(); f.ready(); let concurrent;
+  const book = f.books.get('mirror'), sheet = book.getSheetByName('Check-ins'), oldRange = sheet.getRange;
+  let once = false;
+  sheet.getRange = (...args) => {
+    const range = oldRange(...args), oldWrite = range.setValues;
+    range.setValues = data => { if (!once) { once = true; concurrent = f.request({ action: 'admit', qrValue: '083' }); } return oldWrite(data); }; return range;
+  };
+  f.request({ action: 'admit', qrValue: '083' }); // Treat first response as lost to the device.
+  assert.match(concurrent.error, /processed/); const writes = f.writes().length;
+  assert.equal(f.request({ action: 'admit', qrValue: '083' }).alreadyAdmitted, true); assert.equal(f.writes().length, writes);
+});
+test('inconsistent or missing mirror mode cannot silently enable practice writes', () => {
+  for (const stored of [null, 'false', 'garbage']) {
+    const f = fixture(); f.ready(true);
+    if (stored === null) f.properties.delete('testMode:mirror:Ticket Checklist'); else f.properties.set('testMode:mirror:Ticket Checklist', stored);
+    assert.match(f.request({ action: 'admit', qrValue: '083' }).error, /mode/i); assert.equal(f.writes().length, 0);
+  }
+});
+test('dedicated guard reasserts after lock: erased binding never falls through to generic writer', () => {
+  for (const action of ['admit', 'setTestMode', 'saveEvent']) {
+    const f = fixture(); f.ready();
+    f.books.get('mirror').getSheetByName('Ticket Checklist').values[0] = ['First Name', 'Last Name', 'QR_ID', 'Status', 'Admitted At', '', '', '', '', ''];
+    f.fault.onLock = () => f.properties.delete('studentQrHomecomingBinding');
+    const res = f.request({ action, token: admin, qrValue: '001', testMode: true, config: f.ctx.testConfig });
+    assert.match(res.error, /Homecoming|binding/i); assert.equal(f.writes().length, 0);
+    assert.equal(f.trace.filter(t => t[0] === 'open').length, 0);
+  }
+});
+test('under-lock expected assignment blocks replacement made after phone confirmation', () => {
+  const f = fixture(); f.ready();
+  const list = f.request({ action: 'list' }); const hash = list.rows.find(r => r.QR_ID === '001B').assignmentHash;
+  assert.match(hash, /^[a-f0-9]{64}$/);
+  f.books.get('mirror').getSheetByName('Ticket Checklist').values[5][5] = 'Replacement Guest';
+  assert.match(f.request({ action: 'admit', qrValue: '001B', expectedAssignmentHash: hash }).error, /assignment.*changed/i);
+  assert.equal(f.writes().length, 0);
+});
+test('calendar-impossible stored admission timestamp is refused', () => {
+  const f = fixture(); f.ready(); f.request({ action: 'admit', qrValue: '083' });
+  f.books.get('mirror').getSheetByName('Check-ins').values[1][6] = '2026-02-31T18:00:00';
+  assert.match(f.request({ action: 'admit', qrValue: '083' }).error, /ledger/i);
+});
+test('strict mirror read reports exact numeric-ticket cell without coercing the value', () => {
+  const f = fixture(); f.ready(); f.books.get('mirror').getSheetByName('Ticket Checklist').values[6][2] = 83;
+  assert.match(f.request({ action: 'list' }).error, /C7.*raw|raw.*C7/);
+  assert.equal(f.books.get('mirror').getSheetByName('Ticket Checklist').values[6][2], 83);
+  assert.equal(f.writes().length, 0);
+});

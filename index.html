@@ -226,6 +226,8 @@
     .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
     .tab.active { background: var(--accent); color: #052814; }
     .hidden { display: none; }
+    #decodedCandidate { border: 2px solid var(--warn); }
+    #decodedCandidate .scan-name { font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 800; overflow-wrap: anywhere; }
     .toast {
       position: fixed;
       right: 14px;
@@ -247,6 +249,7 @@
   <div class="container">
     <h1>Student QR Admissions</h1>
     <p class="muted" id="appInstructions">Set up the dance once, then share the helpers' scanner QR.</p>
+    <div id="environmentBanner" class="stat hidden" role="status" style="margin-bottom:12px;"></div>
 
     <div class="tabs">
       <button class="tab" data-tab="setup" id="setupTabButton">Setup</button>
@@ -563,6 +566,8 @@
       ids('manualSubmit').textContent = enabled ? 'Test scan only' : 'Scan / admit';
       const mirror = cfg?.environment === 'mirror-test';
       const label = enabled ? 'Mirror Test - Read-only scans' : 'Mirror Test - Practice check-ins (mirror records only)';
+      ids('environmentBanner').classList.toggle('hidden', !mirror);
+      ids('environmentBanner').textContent = mirror ? label : '';
       ids('scannerMirrorBanner').classList.toggle('hidden', !mirror);
       ids('scannerMirrorBanner').textContent = mirror ? label : '';
       if (mirror) {
@@ -1377,6 +1382,7 @@
           bringingGuest: isGuestFlagEnabled(guestValue),
           admittedAt: readRowValue(r, cfg.admittedAtCol, ['Admitted At', 'admitted_at']),
           personType: typeof r.personType === 'string' ? r.personType : '',
+          assignmentHash: typeof r.assignmentHash === 'string' ? r.assignmentHash : '',
           linkedPersonType: typeof r.linkedPersonType === 'string' ? r.linkedPersonType : '',
           linkedName: typeof r.linkedName === 'string' ? r.linkedName : '',
           linkedTicketId: typeof r.linkedTicketId === 'string' ? r.linkedTicketId : '',
@@ -1455,16 +1461,19 @@
           syncEffectiveTestMode(data.testMode);
         }
         state.rows = normalizeRows(rows, cfg);
+        state.quarantinedRecordCount = Number.isInteger(data.quarantinedRecordCount) && data.quarantinedRecordCount >= 0 ? data.quarantinedRecordCount : 0;
         if (state.scannerRelationshipTicket) {
           const current = state.rows.find(row => row.qr === state.scannerRelationshipTicket);
-          renderScannerRelationship(current && !['Pending', 'Needs Review'].includes(current.status) ? current : null);
+          renderScannerRelationship(current && !['Pending', 'Needs Review', 'Quarantined'].includes(current.status) ? current : null);
         }
         state.rosterLoaded = true;
         state.rosterError = '';
-        renderRosterStatus(state.rows.length ? `Roster: ${state.rows.length} student${state.rows.length === 1 ? '' : 's'}.` : 'No students on the roster.');
+        const activeCount = state.rows.filter(row => row.status !== 'Quarantined').length;
+        const quarantineNotice = state.quarantinedRecordCount ? ` ${state.quarantinedRecordCount} source records quarantined; their tickets are blocked.` : '';
+        renderRosterStatus((activeCount ? `Roster: ${activeCount} ${cfg.rosterMode === 'homecoming-2026' ? 'ticket holders' : `student${activeCount === 1 ? '' : 's'}`}.` : 'No students on the roster.') + quarantineNotice);
         renderDashboard();
         if (!options.silent) {
-          toast(state.rows.length ? `Loaded ${state.rows.length} students.` : 'No students on the roster.', Boolean(state.rows.length));
+          toast(activeCount ? `Loaded ${activeCount} ${cfg.rosterMode === 'homecoming-2026' ? 'ticket holders' : 'students'}.${quarantineNotice}` : 'No students on the roster.', Boolean(activeCount));
         }
         return true;
       } catch (err) {
@@ -1526,7 +1535,7 @@
           </tr>`;
       }).join('');
 
-      const total = state.rows.length;
+      const total = state.rows.filter(r => r.status !== 'Quarantined').length;
       const admitted = state.rows.filter(r => normalizeKey(r.status) === normalizeKey(state.config?.admittedValue || 'Admitted')).length;
       const guestCount = state.rows.filter(r => r.bringingGuest).length;
       const missing = total - admitted;
@@ -1538,7 +1547,7 @@
         <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
       `;
 
-      if (state.config?.rosterMode === 'homecoming-2026') ids('stats').innerHTML += `<div class="stat">Students <strong>${state.rows.filter(r => r.personType === 'Student').length}</strong></div><div class="stat">Guests <strong>${state.rows.filter(r => r.personType === 'Guest').length}</strong></div>`;
+      if (state.config?.rosterMode === 'homecoming-2026') ids('stats').innerHTML += `<div class="stat">Students <strong>${state.rows.filter(r => r.personType === 'Student').length}</strong></div><div class="stat">Guests <strong>${state.rows.filter(r => r.personType === 'Guest').length}</strong></div><div class="stat">Quarantined tickets <strong>${state.rows.filter(r => r.status === 'Quarantined').length}</strong></div>`;
       updateTestModeUi();
     }
 
@@ -1564,7 +1573,7 @@
 
     function renderScannerRelationship(row) {
       state.scannerRelationshipTicket = row?.qr || '';
-      if (!row || ['Pending', 'Needs Review'].includes(row.status)) { updateScannerGuestFlag(false, ''); return; }
+      if (!row || ['Pending', 'Needs Review', 'Quarantined'].includes(row.status)) { updateScannerGuestFlag(false, ''); return; }
       if (!row.personType) { updateScannerGuestFlag(row.bringingGuest, row.guestValue || ''); return; }
       const target = ids('scannerGuestFlag');
       target.className = row.linkedTicketId ? 'scanner-guest-flag' : 'stat';
@@ -1601,7 +1610,7 @@
         const matches = state.rows.filter(row => row.qr === candidate.ticket);
         if (state.rosterError || state.decodedCandidate !== candidate || candidate.configKey !== rosterConfigKey(state.config) || matches.length !== 1 || candidate.snapshot !== candidateSnapshot(matches[0])) throw new Error('Roster or ticket assignment changed. Scan and confirm again.');
         cancelDecodedCandidate();
-        await admitByQr(candidate.ticket, { source: candidate.source });
+        await admitByQr(candidate.ticket, { source: candidate.source, expectedAssignmentHash: matches[0].assignmentHash });
       } catch (err) {
         cancelDecodedCandidate(); setScreenAlert('error');
         renderScanResultCard({ stateClass: 'scan-state-blocked', kicker: 'Not confirmed', name: 'Select ticket again', detail: err.message, status: 'Not checked in', qrValue: candidate.ticket, admittedAt: '' });
@@ -1751,6 +1760,7 @@
           matches = state.rows.filter(entry => entry.qr === qrValue);
         }
         if (matches.length > 1) throw new Error('Duplicate QR_ID on the roster. Resolve the duplicate before admission.');
+        if (matches.length && matches[0].status === 'Quarantined') throw new Error('Quarantined ticket: conflicting or incomplete source record. Ask Eve to review; do not admit.');
         if (matches.length && (requestedTestMode || parseTestMode(state.config.testMode))) {
           // A test is a read-only roster lookup, never a write-capable admit request.
           const student = matches[0];
@@ -1763,7 +1773,7 @@
           renderScanResultCard({ stateClass: alreadyAdmitted ? 'scan-state-already' : 'scan-state-test',
             kicker: alreadyAdmitted ? 'Already Scanned' : 'Test Scan Only', name: student.name || 'Student found',
             detail: 'Read-only roster lookup. No attendance update was requested.' +
-              (!state.config.testMode ? ' Global live mode now applies to the next scan.' : ''),
+              (!state.config.testMode ? (state.config.environment === 'mirror-test' ? ' Mirror practice mode now applies to the next scan.' : ' Global live mode now applies to the next scan.') : ''),
             status: student.status, qrValue: student.qr, admittedAt: student.admittedAt });
           toast(`Tested: ${student.name || student.qr}`);
           return;
@@ -1773,7 +1783,8 @@
           allowedStatuses: [],
           testMode: false,
         };
-        const res = matches.length ? await callApi('admit', { qrValue }, 'POST', admitConfig) : {};
+        const expectedAssignmentHash = options.expectedAssignmentHash || matches[0]?.assignmentHash;
+        const res = matches.length ? await callApi('admit', { qrValue, ...(state.config.rosterMode === 'homecoming-2026' ? { expectedAssignmentHash } : {}) }, 'POST', admitConfig) : {};
         if (configKey !== rosterConfigKey(state.config)) throw new Error('Dance setup changed during admission. Verify attendance before rescanning.');
         if (res?.error) throw new Error(String(res.error));
         const row = res.row || null;
@@ -1813,8 +1824,8 @@
           throw new Error('The server returned a different QR_ID. Verify attendance before rescanning.');
         }
         const canonicalScanRow = findCanonicalScanRow(row, qrValue, res?.matchedQrValue);
-        const displayName = canonicalScanRow?.name
-          || `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim();
+        if (cfg.rosterMode === 'homecoming-2026' && row.assignmentHash !== expectedAssignmentHash) throw new Error('Server returned a different ticket assignment. Verify mirror attendance.');
+        const displayName = `${readRowValue(row, cfg.firstNameCol, ['First Name', 'FirstName', 'first_name']) || ''} ${readRowValue(row, cfg.lastNameCol, ['Last Name', 'LastName', 'last_name']) || ''}`.trim() || canonicalScanRow?.name;
         const statusValue = readRowValue(row, cfg.statusCol, ['Status']) || 'Missing';
         const admittedAtValue = readRowValue(row, cfg.admittedAtCol, ['Admitted At', 'admitted_at']) || '';
         const qrDisplayValue = getScanDisplayQrValue(row, cfg, qrValue, res?.matchedQrValue);
@@ -1878,10 +1889,10 @@
           renderScanResultCard({
             stateClass: 'scan-state-success',
             kicker: 'Checked In',
-            name: displayName || 'Student admitted',
+            name: displayName || 'Ticket holder admitted',
             detail: bringingGuest
               ? 'Guest flag is on. Confirm the guest is also on the admittance list.'
-              : 'Student admitted successfully.',
+              : `${returnedPerson.personType === 'Guest' ? 'Guest' : 'Student'} admitted successfully.`,
             status: statusValue,
             qrValue: qrDisplayValue,
             admittedAt: admittedAtValue,

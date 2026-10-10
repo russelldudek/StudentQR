@@ -5,6 +5,7 @@ var HOMECOMING_PRODUCTION_ID_ = '1hlWdxxzlP2Zbl9m4_MN49XBgBrL7YiG67ur2p2tEueU';
 var HOMECOMING_BINDING_KEY_ = 'studentQrHomecomingBinding';
 var HOMECOMING_LEDGER_HEADERS_ = ['Event ID', 'Person Type', 'Ticket ID (JSON)',
   'Source Student ID (JSON)', 'Subject Assignment SHA256', 'Status', 'Admitted At'];
+var HOMECOMING_QUARANTINE_HEADERS_ = ['Ticket ID (JSON)', 'Reason', 'Source rows (JSON)'];
 
 function readHomecomingBinding_() {
   var raw = PropertiesService.getScriptProperties().getProperty(HOMECOMING_BINDING_KEY_);
@@ -16,7 +17,7 @@ function assertHomecomingBinding_(binding, event) {
       binding.environment !== 'mirror-test' || typeof binding.spreadsheetId !== 'string' ||
       !binding.spreadsheetId || binding.spreadsheetId === HOMECOMING_PRODUCTION_ID_ ||
       binding.sourceSheetName !== 'Ticket Checklist' || binding.sourceHeaderRow !== 5 ||
-      binding.attendanceSheetName !== 'Check-ins') throw new Error('Homecoming mirror binding is not ready or safe. Owner review required.');
+      binding.attendanceSheetName !== 'Check-ins' || binding.quarantineSheetName !== 'Quarantine') throw new Error('Homecoming mirror binding is not ready or safe. Owner review required.');
   if (event && (event.config.rosterMode !== 'homecoming-2026' || event.config.environment !== binding.environment ||
       extractSpreadsheetId_(event.config.sheetUrl) !== binding.spreadsheetId || event.config.sheetName !== binding.sourceSheetName)) {
     throw new Error('Homecoming event does not match its sealed mirror binding.');
@@ -37,11 +38,85 @@ function readHomecomingContext_(binding, eventId) {
   assertHomecomingTarget_(book, binding);
   var intakeSheet = book.getSheetByName(binding.sourceSheetName);
   var ledgerSheet = book.getSheetByName(binding.attendanceSheetName);
-  if (!intakeSheet || !ledgerSheet) throw new Error('Homecoming mirror intake or attendance ledger is missing.');
-  var subjects = projectCombinedIntake_(intakeSheet.getDataRange().getValues()).subjects;
+  var quarantineSheet = book.getSheetByName(binding.quarantineSheetName);
+  if (!intakeSheet || !ledgerSheet || !quarantineSheet) throw new Error('Homecoming mirror intake, quarantine or attendance ledger is missing.');
+  var subjects = projectLocatedHomecomingIntake_(intakeSheet.getDataRange().getValues(), intakeSheet).subjects;
+  var quarantineRange = quarantineSheet.getDataRange();
+  var quarantine = parseHomecomingQuarantine_(quarantineRange.getValues(), quarantineRange.getFormulas(), subjects);
   var ledgerRange = ledgerSheet.getDataRange();
   var attendance = parseHomecomingLedger_(ledgerRange.getValues(), ledgerRange.getFormulas(), eventId, subjects);
-  return { book: book, intakeSheet: intakeSheet, ledgerSheet: ledgerSheet, subjects: subjects, attendance: attendance };
+  return { book: book, intakeSheet: intakeSheet, ledgerSheet: ledgerSheet, subjects: subjects, attendance: attendance, quarantine: quarantine };
+}
+
+function parseHomecomingQuarantine_(values, formulas, subjects) {
+  if (!values.length || JSON.stringify(values[0]) !== JSON.stringify(HOMECOMING_QUARANTINE_HEADERS_)) throw new Error('Quarantine headers are incompatible.');
+  var tickets = new Set(), records = new Set(), safeTickets = new Set(subjects.map(function(s) { return s.ticketId; }));
+  values.forEach(function(row, i) {
+    if (!formulas[i] || formulas[i].some(function(cell) { return cell !== ''; })) throw new Error('Quarantine contains formulas.');
+    if (i === 0) return;
+    if (row.every(function(cell) { return cell === ''; })) return;
+    var ticket, rows;
+    try {
+      ticket = JSON.parse(row[0]); rows = JSON.parse(row[2]);
+      if (row.length !== 3 || typeof ticket !== 'string' || (ticket && !mirrorQuarantineDiagnosticTicket_(ticket)) || JSON.stringify(ticket) !== row[0] ||
+          row[1] !== 'Conflict or incomplete source record' || !Array.isArray(rows) || !rows.length ||
+          JSON.stringify(rows) !== row[2] || rows.some(function(n) { return !Number.isInteger(n) || n < 6; }) ||
+          new Set(rows).size !== rows.length || tickets.has(ticket) || safeTickets.has(ticket)) throw new Error('Invalid quarantine record');
+    } catch (err) { throw new Error('Quarantine row ' + (i + 1) + ' is invalid. Owner review required.'); }
+    tickets.add(ticket); rows.forEach(function(n) { records.add(n); });
+  });
+  return { tickets: tickets, recordCount: records.size };
+}
+
+function mirrorQuarantineDiagnosticTicket_(ticket) {
+  // Retain numeric ticket identifiers/annotations, never misplaced names, IDs or error text.
+  return typeof ticket === 'string' && (/^\d+B?$/.test(ticket) || (/^[\d\s(),/.-]+$/.test(ticket) && /\d/.test(ticket)));
+}
+
+function homecomingQuarantineRows_(quarantine) {
+  var rows = [];
+  quarantine.tickets.forEach(function(ticket) {
+    if (/^\d+B?$/.test(ticket)) rows.push({ 'First Name': 'Ticket quarantined', 'Last Name': '', QR_ID: ticket,
+      Status: 'Quarantined', 'Admitted At': '', 'Bringing Guest': '', personType: '', assignmentHash: '',
+      linkedPersonType: '', linkedName: '', linkedTicketId: '', linkedStatus: '', linkedAdmittedAt: '' });
+  });
+  return rows;
+}
+
+function projectLocatedHomecomingIntake_(values, sheet) {
+  try { return projectCombinedIntake_(values); } catch (err) {
+    var notes = [], ids = new Map(), tickets = new Map();
+    for (var i = 5; i < values.length; i += 1) {
+      var row = values[i];
+      if (!Array.isArray(row) || row.every(combinedEmptyCell_)) continue;
+      var n = i + 1;
+      [['B', 1], ['C', 2]].forEach(function(field) {
+        if (typeof row[field[1]] !== 'string' || !row[field[1]] || row[field[1]].trim() !== row[field[1]]) notes.push(field[0] + n + ': identity must be literal raw text.');
+      });
+      if (!['Yes', 'No', '', null].includes(row[4])) notes.push('E' + n + ': guest declaration must be Yes, No or empty.');
+      if (row[4] === 'Yes' && (typeof row[9] !== 'string' || !row[9])) notes.push('J' + n + ': guest ticket is missing or not literal text.');
+      if (ids.has(row[1]) && row[1]) notes.push('B' + n + ': duplicate source identity with B' + ids.get(row[1]) + '.');
+      ids.set(row[1], n);
+      [[row[2], 'C'], [row[4] === 'Yes' ? row[9] : '', 'J']].forEach(function(entry) {
+        if (!entry[0]) return;
+        if (tickets.has(entry[0])) notes.push(entry[1] + n + ': duplicate ticket with ' + tickets.get(entry[0]) + '.');
+        else tickets.set(entry[0], entry[1] + n);
+      });
+      if (row.slice(10).some(function(v) { return !combinedEmptyCell_(v); })) notes.push('Row ' + n + ': populated extra columns.');
+    }
+    if (sheet) {
+      var range = sheet.getDataRange(), formulas = range.getFormulas(), formats = range.getNumberFormats();
+      notes.slice(0, 12).forEach(function(note, index) {
+        var match = note.match(/^([BCJ])(\d+):/);
+        if (match) {
+          var column = { B: 1, C: 2, J: 9 }[match[1]], rowIndex = Number(match[2]) - 1;
+          notes[index] += ' Formula present: ' + Boolean(formulas[rowIndex] && formulas[rowIndex][column]) +
+            '; plain-text number format: ' + Boolean(formats[rowIndex] && formats[rowIndex][column] === '@') + '; displayed formatting is not raw identity.';
+        }
+      });
+    }
+    throw new Error(err.message + (notes.length ? ' Locations: ' + notes.slice(0, 20).join(' ') : ' Inspect row 5 headers and complete data rows.'));
+  }
 }
 
 function homecomingLinks_(subjects) {
@@ -82,7 +157,7 @@ function parseHomecomingLedger_(values, formulas, eventId, subjects) {
     if (row.length !== 7 || row[0] !== eventId || !['Student', 'Guest'].includes(row[1]) ||
         typeof row[4] !== 'string' || !/^[a-f0-9]{64}$/.test(row[4]) || !['Pending', 'Admitted'].includes(row[5]) ||
         typeof row[6] !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(row[6]) ||
-        !isFinite(Date.parse(row[6] + 'Z'))) throw new Error('Homecoming ledger row ' + (r + 1) + ' is invalid.');
+        !isFinite(Date.parse(row[6] + 'Z')) || new Date(row[6] + 'Z').toISOString().slice(0, 19) !== row[6]) throw new Error('Homecoming ledger row ' + (r + 1) + ' is invalid.');
     var ticket, sourceId;
     try {
       ticket = combinedLiteralIdentity_(JSON.parse(row[2]), 'ledger ticket');
@@ -107,19 +182,24 @@ function homecomingRows_(subjects, attendance) {
     return { 'First Name': s.fullName, 'Last Name': '', QR_ID: s.ticketId,
       Status: record ? record.status : 'Not checked in', 'Admitted At': record ? record.timestamp : '',
       'Bringing Guest': s.personType === 'Student' && linked ? 'Yes' : 'No', personType: s.personType,
+      assignmentHash: subjectAssignmentHash_(s, linked),
       linkedPersonType: linked ? linked.personType : '', linkedName: linked ? linked.fullName : '',
       linkedTicketId: linked ? linked.ticketId : '', linkedStatus: linked ? (linkedRecord ? linkedRecord.status : 'Not checked in') : '',
       linkedAdmittedAt: linkedRecord ? linkedRecord.timestamp : '' };
   });
 }
 
-function admitHomecomingLocked_(config, binding, qrValue, eventId) {
+function admitHomecomingLocked_(config, binding, qrValue, eventId, expectedAssignmentHash) {
   if (typeof qrValue !== 'string' || !qrValue || qrValue.trim() !== qrValue) throw new Error('An exact string ticket is required.');
   var context = readHomecomingContext_(binding, eventId);
+  if (context.quarantine.tickets.has(qrValue)) throw new Error('Ticket quarantined: conflicting or incomplete source record. Owner review required.');
   var rows = homecomingRows_(context.subjects, context.attendance);
   var index = context.subjects.findIndex(function(s) { return s.ticketId === qrValue; });
   if (index < 0) throw new Error('Ticket not found on the Homecoming roster.');
   var row = rows[index], record = context.attendance.get(qrValue);
+  if (typeof expectedAssignmentHash !== 'string' || !/^[a-f0-9]{64}$/.test(expectedAssignmentHash) || row.assignmentHash !== expectedAssignmentHash) {
+    throw new Error('Ticket assignment changed or was not confirmed. Refresh, scan and confirm again.');
+  }
   config.testMode = getGlobalTestMode_(config, config.testMode);
   if (record && record.status !== 'Admitted') throw new Error(record.status + ': admission uncertain or assignment changed. Owner review required.');
   if (record) return { row: row, matchedQrValue: qrValue, alreadyAdmitted: true, testMode: config.testMode };

@@ -27,19 +27,20 @@ function fixture(options = {}) {
         function read(source) { check('readback'); trace.push(['read', id, name]); return Array.from({ length: nr }, (_, a) => Array.from({ length: nc }, (_, z) => source[r - 1 + a]?.[c - 1 + z] ?? '')); }
         function write(data) { check('write'); if (id === production) throw Error('PRODUCTION WRITE REFUSED'); trace.push(['write', id, name, r, c, data]);
           data.forEach((row, a) => row.forEach((v, z) => { values[r - 1 + a] ||= []; values[r - 1 + a][c - 1 + z] = v; })); return api; }
-        const api = { getValues: () => read(values), getDisplayValues: () => read(values), getFormulas: () => read(formulas),
+        const api = { getValues: () => read(values), getDisplayValues: () => read(values), getFormulas: () => read(formulas), getNumberFormats: () => Array.from({length:nr}, () => Array(nc).fill('@')),
           setNumberFormat() { return api; }, setValues: write, setValue: v => { check('status'); return write([[v]]); },
           setRichTextValues: data => write(data.map(row => row.map(v => v.text))) };
         return api;
       }
       sheets.set(name, s); return s;
     }
-    sheet('Ticket Checklist', rows); sheet('Check-ins', [ledgerHeaders.slice()]); books.set(id, b); return b;
+    sheet('Ticket Checklist', rows); sheet('Check-ins', [ledgerHeaders.slice()]);
+    sheet('Quarantine', [['Ticket ID (JSON)', 'Reason', 'Source rows (JSON)']]); books.set(id, b); return b;
   }
   book('mirror'); book(production, options.source || intake());
   const ctx = vm.createContext({ console, Date, Map, Set, JSON, Object, String, Array, Number, Error,
     fetch() { throw Error('NETWORK REFUSED'); },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: k => properties.get(k) ?? null, setProperty(k, v) { check('property'); properties.set(k, v); } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: k => properties.get(k) ?? null, setProperty(k, v) { fault.onProperty?.(k,v); check('property'); properties.set(k, v); } }) },
     LockService: { getScriptLock: () => ({ tryLock() { fault.onLock?.(); if (locked || fault.locked) return false; locked = true; return true; }, releaseLock() { locked = false; } }) },
     Session: { getScriptTimeZone: () => 'America/New_York' },
     Utilities: { getUuid: () => crypto.randomUUID(), DigestAlgorithm: { SHA_256: 'sha256' }, computeDigest: (_, s) => [...crypto.createHash('sha256').update(s).digest()], formatDate: () => '2026-10-10T18:00:00' },
@@ -54,13 +55,23 @@ function fixture(options = {}) {
   }
   const run = code => vm.runInContext(code, ctx);
   function ready(testMode = false) {
-    properties.set('studentQrHomecomingBinding', JSON.stringify({ version: 1, stage: 'ready', environment: 'mirror-test', spreadsheetId: 'mirror', sourceSheetName: 'Ticket Checklist', sourceHeaderRow: 5, attendanceSheetName: 'Check-ins' }));
+    properties.set('studentQrHomecomingBinding', JSON.stringify({ version: 1, stage: 'ready', environment: 'mirror-test', spreadsheetId: 'mirror', sourceSheetName: 'Ticket Checklist', sourceHeaderRow: 5, attendanceSheetName: 'Check-ins', quarantineSheetName: 'Quarantine' }));
     const config = { sheetUrl: 'https://docs.google.com/spreadsheets/d/mirror/edit', apiUrl: 'https://script.google.com/macros/s/FICTIONAL/exec', sheetName: 'Ticket Checklist', firstNameCol: 'First Name', lastNameCol: 'Last Name', qrCol: 'QR_ID', statusCol: 'Status', admittedAtCol: 'Admitted At', guestCol: 'Bringing Guest', eventName: 'Homecoming 2026 - Mirror Test', admittedValue: 'Admitted', timeZone: 'America/New_York', testMode, rosterMode: 'homecoming-2026', environment: 'mirror-test' };
     ctx.testConfig = config;
     properties.set('studentQrSharedDance', JSON.stringify({ version: 1, eventId: 'event-1', revision: 1, config, adminHash: run(`sharedTokenHash_('${admin}')`), helperHash: run(`sharedTokenHash_('${helper}')`), helperToken: helper }));
     properties.set('testMode:mirror:Ticket Checklist', String(testMode));
   }
-  function request(body) { ctx.req = { postData: { contents: JSON.stringify({ eventId: 'event-1', revision: 1, token: helper, ...body }) } }; return JSON.parse(run('doPost(req).value')); }
+  function request(body) {
+    let expectedAssignmentHash;
+    if (body.action === 'admit' && body.expectedAssignmentHash === undefined) {
+      try {
+        ctx.clientRaw = books.get(JSON.parse(properties.get('studentQrHomecomingBinding')).spreadsheetId).getSheetByName('Ticket Checklist').values;
+        ctx.clientTicket = body.qrValue;
+        expectedAssignmentHash = run('var ps=projectCombinedIntake_(clientRaw).subjects;var p=ps.find(s=>s.ticketId===clientTicket);p?subjectAssignmentHash_(p,homecomingLinks_(ps).get(p.ticketId)):""');
+      } catch {}
+    }
+    ctx.req = { postData: { contents: JSON.stringify({ eventId: 'event-1', revision: 1, token: helper, expectedAssignmentHash, ...body }) } }; return JSON.parse(run('doPost(req).value'));
+  }
   return { ctx, run, book, books, properties, fault, trace, ready, request, writes: () => trace.filter(t => t[0] === 'write') };
 }
 module.exports = { fixture, intake, headers, ledgerHeaders, admin, helper, production };

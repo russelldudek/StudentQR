@@ -85,3 +85,11 @@ Then open `http://localhost:3000/health`.
 - Add QR scanner UI + operator authentication.
 - Add student roster import.
 - Add reporting export.
+
+## Homecoming Mirror Backend
+
+The dedicated Homecoming mirror implementation is described in
+[the iPhone test runbook](docs/homecoming-iphone-test.md). It uses exact printed
+ticket strings, bidirectional guest associations, a separate verified attendance
+ledger, and fictional identities. Production is never a permitted mirror write
+target. Deployment and physical-phone testing remain separate gates.

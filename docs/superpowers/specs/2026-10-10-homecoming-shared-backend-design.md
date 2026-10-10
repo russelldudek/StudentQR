@@ -1,5 +1,20 @@
 # Homecoming 2026 Shared Backend
 
+## Approved Mirror Import Amendment
+
+Russ explicitly authorized `Build mirror with conflicts quarantined` after
+reviewing the source conflicts. Printed tickets remain unchanged. Mirror-only
+numeric student values 0-999 become three-character strings; explicit guest
+ticket strings remain literal. Only safe assigned student/guest pairs enter the
+fictional intake. A separate Quarantine sheet records blocked ticket strings,
+generic reasons and source row numbers, without real names or student IDs.
+Ambiguous numeric annotations and padded ticket text reserve conservative
+printed-code candidates for blocking only, never admission aliases. All owners
+of a conflicting ticket and their linked guests are quarantined. Unknown or
+missing tickets remain excluded and visibly counted as quarantined records.
+Both test modes refuse quarantined tickets. This amendment supersedes the
+whole-source mirror import gate, not strict production projection validation.
+
 Status: Design approved by Russ on 2026-10-10, including bidirectional guest
 links. Implementation-plan review is the next gate. Russ additionally requested
 an isolated mirror-test roster for two-iPhone testing; its provisioning and
