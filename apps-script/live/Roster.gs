@@ -47,8 +47,9 @@ function buildLiveRoster_(rawValues,state) {
     records.push({recordId:liveRecordId_(sourceRow,baseHash),sourceRow:sourceRow,baseHash:baseHash,correctionVersion:correction ? correction.correctionId : '',fields:fields,issues:issues,subjects:subjects,reservations:Array.from(new Set(reservations)),conflicts:[]});
   });
   state.corrections.filter(function(c) { return !records.some(function(r) { return r.sourceRow === c.sourceRow; }); }).forEach(function(c) {
-    extraReservations = extraReservations.concat(c.reservedTickets || [],liveTicketCandidates_(c.fields.studentTicket),liveTicketCandidates_(c.fields.guestTicket));
-    records.push({recordId:liveRecordId_(c.sourceRow,c.baseHash),sourceRow:c.sourceRow,baseHash:c.baseHash,correctionVersion:c.correctionId,fields:c.fields,issues:['Corrected source record removed; owner review required.'],subjects:[],reservations:extraReservations.slice(),conflicts:[]});
+    var reservations = Array.from(new Set((c.reservedTickets || []).concat(liveTicketCandidates_(c.fields.studentTicket),liveTicketCandidates_(c.fields.guestTicket))));
+    extraReservations = extraReservations.concat(reservations);
+    records.push({recordId:liveRecordId_(c.sourceRow,c.baseHash),sourceRow:c.sourceRow,baseHash:c.baseHash,correctionVersion:c.correctionId,fields:c.fields,issues:['Corrected source record removed; owner review required.'],subjects:[],reservations:reservations,conflicts:[],removedSource:true});
   });
   var owners = Object.create(null);
   records.forEach(function(r,index) {
@@ -73,7 +74,7 @@ function buildLiveRoster_(rawValues,state) {
       blockedTickets = blockedTickets.concat(r.reservations);
       var connected = new Set([index]), changed = true;
       while (changed) { changed = false; Array.from(connected).forEach(function(n) { records[n].conflicts.forEach(function(k) { if (!connected.has(k)) { connected.add(k); changed = true; } }); }); }
-      attention.push({recordId:r.recordId,sourceRow:r.sourceRow,baseHash:r.baseHash,correctionVersion:r.correctionVersion,fields:r.fields,issues:Array.from(new Set(r.issues)),conflictGroupId:hashLive_(Array.from(connected).sort().join(','))});
+      attention.push({recordId:r.recordId,sourceRow:r.sourceRow,baseHash:r.baseHash,correctionVersion:r.correctionVersion,fields:r.fields,issues:Array.from(new Set(r.issues)),conflictGroupId:hashLive_(Array.from(connected).sort().join(',')),removedSource:!!r.removedSource});
     } else subjects = subjects.concat(r.subjects);
   });
   blockedTickets = Array.from(new Set(blockedTickets.concat(pendingTickets)));

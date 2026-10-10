@@ -25,6 +25,10 @@ Use exact manual entry if necessary, including printed leading zeros.
 Continuous mode waits a full second after processing before the next scan.
 Stop/background/orientation changes cancel late decoding, not a dispatched
 server operation. Reconcile an uncertain operation before scanning again.
+If the original ID has no journal record, reconciliation reserves a verified
+Cancelled marker under the same backend lock. A delayed original request then
+cannot check in that ticket. If that marker is itself Pending, Eve must cancel
+it explicitly; it can never be completed into an admission.
 
 Green means verified admitted student. Yellow means student with a guest or a
 guest ticket. Red means duplicate/unknown/blocked/unconfirmed. The result shows
@@ -47,6 +51,11 @@ Each publication allows at most 100 selected records, validated atomically.
 The app-only correction layer is globally authoritative; the original intake
 is not edited. Source movement/change makes an old override Needs Attention.
 Drafts remain frozen during polling; Reload / Discard Draft is explicit.
+If a corrected source row has been removed, Eve can review and retire the old
+override with `ARE YOU SURE!?`. This releases its ticket reservations, retains
+correction/audit history and never edits the intake or transfers attendance.
+Active/Pending attendance must be reviewed/reset first. A changed snapshot
+invalidates retirement just like a reset.
 An active/changed attendance assignment needs individual review/reset before
 publishing a replacement. Corrections never inherit another person's attendance.
 
@@ -54,6 +63,8 @@ Reset Ticket and Reset All preview the exact scope/count and show
 `ARE YOU SURE!?`; Cancel is the default. Confirm expires after 120 seconds.
 Any intervening source/check-in change invalidates the preview. Reset All cannot
 bypass Pending or changed-assignment review. No ledger rows are cleared/deleted.
+Reset previews retain revision hashes/counts, not a large list in one Script
+Property; confirmation derives and journals the exact admission IDs under lock.
 
 For Pending operations, review the displayed kind/tickets. Explicit Cancel
 retains the journal evidence and releases its reservation; Complete requires

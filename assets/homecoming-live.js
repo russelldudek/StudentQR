@@ -35,7 +35,8 @@
       }
       async function reconcileOperation(operationId) {
         current(); const saved = get('operation:'+operationId); if (!saved) throw Error('Local operation proof is unavailable; ask Eve.');
-        const response = await request('getOperation',{operationId,...(saved.payload.actorSecret?{actorSecret:saved.payload.actorSecret,undoSecret:saved.payload.undoSecret}:{})});
+        let response = await request('getOperation',{operationId,...(saved.payload.actorSecret?{actorSecret:saved.payload.actorSecret,undoSecret:saved.payload.undoSecret}:{})});
+        if (response.state === 'NotFound' && saved.action !== 'reviewOperation') response = await request('cancelUncommitted',{originalAction:saved.action,originalPayload:saved.payload});
         if (response.state === 'Committed') {
           if (get('pending') === operationId) storage.removeItem(namespace+'pending');
           if (response.receipt && response.canUndo) put('latest',{...saved,receipt:response.receipt});
@@ -45,7 +46,7 @@
         } else if (response.state === 'Cancelled') {
           if (get('pending') === operationId) storage.removeItem(namespace+'pending');
           if (get('latest')?.receipt?.operationId === operationId) storage.removeItem(namespace+'latest');
-          renderRelationship(null); renderResult({kind:'error',ticket:saved.payload.qrValue||'',detail:'Operation Cancelled by Eve. No check-in was committed by this operation.'});
+          renderRelationship(null); renderResult({kind:'error',ticket:saved.payload.qrValue||'',detail:'Operation cancellation verified. No check-in was committed by this operation.'});
           el('reconcileLastOperation').disabled = !get('pending');
           message('Cancellation verified. You can scan again.'); await refreshRoster();
         } else message(response.state==='NotFound'?'No verified commit found yet. Keep the original operation ID; ask Eve before retrying.':'Operation '+response.state+'. Eve review required.');
@@ -99,9 +100,9 @@
       }
       function renderAttention() {
         const records = attention.records;
-        el('liveAttention').innerHTML = records.length ? '<p>Edit the records you want to fix. Edited records are selected automatically. Publish up to 100 selected records together.</p>'+records.map(r=>`<form class="live-record" data-record-id="${escapeHtml(r.recordId)}"><h3>Record ${r.sourceRow}: ${escapeHtml(r.fields.studentName||'Missing student name')}</h3><p>${r.issues.map(escapeHtml).join('<br>')}</p><label><input type="checkbox" name="includeRecord"> Include this record in publication</label><div class="live-fields">${fields.map(k=>`<label>${escapeHtml(k)}<input name="${k}" value="${escapeHtml(r.fields[k]??'')}" autocomplete="off"></label>`).join('')}</div></form>`).join('') : '<p>No conflicting or incomplete tickets.</p>';
+        el('liveAttention').innerHTML = records.length ? '<p>Edit the records you want to fix. Edited records are selected automatically. Publish up to 100 selected records together.</p>'+records.map(r=>r.removedSource?`<div class="live-record"><h3>Removed source record ${r.sourceRow}: ${escapeHtml(r.fields.studentName||'Missing student name')}</h3><p>Retiring this override releases its old ticket reservations. It does not restore or edit the intake, transfer attendance, or erase history.</p><button type="button" data-retire="${escapeHtml(r.correctionVersion)}">Review And Retire Removed Override</button></div>`:`<form class="live-record" data-record-id="${escapeHtml(r.recordId)}"><h3>Record ${r.sourceRow}: ${escapeHtml(r.fields.studentName||'Missing student name')}</h3><p>${r.issues.map(escapeHtml).join('<br>')}</p><label><input type="checkbox" name="includeRecord"> Include this record in publication</label><div class="live-fields">${fields.map(k=>`<label>${escapeHtml(k)}<input name="${k}" value="${escapeHtml(r.fields[k]??'')}" autocomplete="off"></label>`).join('')}</div></form>`).join('') : '<p>No conflicting or incomplete tickets.</p>';
         el('publishLiveCorrections').disabled = !records.length;
-        el('livePending').innerHTML = attention.pending.map(p=>`<div class="live-record"><strong>${escapeHtml(p.kind)} Pending</strong><p>${escapeHtml(p.tickets.join(', '))}</p><button type="button" data-review="${escapeHtml(p.operationId)}" data-decision="cancel">Review / Cancel Pending</button><button type="button" data-review="${escapeHtml(p.operationId)}" data-decision="complete">Review / Complete Pending</button></div>`).join('') + attention.attendanceReview.map(a=>`<div class="live-record"><strong>Attendance assignment changed: ${escapeHtml(a.ticketId)}</strong><p>Review the current student/guest record before resetting this ticket. Reset All cannot bypass this.</p><button type="button" data-drift="${escapeHtml(a.ticketId)}" data-hash="${escapeHtml(a.currentAssignmentHash)}">Review Current Assignment And Reset</button></div>`).join('');
+        el('livePending').innerHTML = attention.pending.map(p=>`<div class="live-record"><strong>${escapeHtml(p.kind)} Pending</strong><p>${escapeHtml(p.tickets.join(', '))}</p><button type="button" data-review="${escapeHtml(p.operationId)}" data-decision="cancel">Review / Cancel Pending</button>${p.kind==='Noop'?'':`<button type="button" data-review="${escapeHtml(p.operationId)}" data-decision="complete">Review / Complete Pending</button>`}</div>`).join('') + attention.attendanceReview.map(a=>`<div class="live-record"><strong>Attendance assignment changed: ${escapeHtml(a.ticketId)}</strong><p>Review the current student/guest record before resetting this ticket. Reset All cannot bypass this.</p><button type="button" data-drift="${escapeHtml(a.ticketId)}" data-hash="${escapeHtml(a.currentAssignmentHash)}">Review Current Assignment And Reset</button></div>`).join('');
       }
       async function loadAttention({discardDraft=false}={}) {
         admin(); current(); if (draft && !discardDraft) { message('Draft retained. Reload / Discard Draft explicitly to get fresh records.'); return attention; }
@@ -132,16 +133,16 @@
         admin(); if (busy) return; current(); cancelReset();
         resetPreview = await request('previewReset',{scope,...(ticketId?{ticketId}:{}),...(reviewedAssignmentHash?{reviewedAssignmentHash}:{})});
         if (resetPreview.requiresReview || !resetPreview.confirmationToken) { resetPreview=null; throw Error('Pending / changed assignments need individual Eve review first.'); }
-        el('liveResetWarning').textContent = 'ARE YOU SURE!? '+(scope==='ticket'?'Reset ticket '+ticketId:scope==='operation'?'Review Pending operation':'Reset all '+resetPreview.count+' checked-in tickets')+'? History is retained.';
+        el('liveResetWarning').textContent = 'ARE YOU SURE!? '+(scope==='ticket'?'Reset ticket '+ticketId:scope==='operation'?'Review Pending operation':scope==='correction'?'Retire removed override and release '+resetPreview.count+' ticket reservations':'Reset all '+resetPreview.count+' checked-in tickets')+'? History is retained.';
         el('liveResetDialog').classList.remove('hidden'); el('cancelLiveReset').focus?.(); return resetPreview;
       }
       async function confirmReset() {
         admin(); if (busy || !resetPreview) return; busy = true; const p = resetPreview; cancelReset();
         try {
           current(); if (get('pending') && !(p.scope === 'operation' && get('pending') === p.ticketId)) throw Error('Reconcile previous operation first.');
-          const response = p.scope === 'operation' ? await mutate('reviewOperation',{operationId:p.ticketId,decision:p.decision,intentHash:p.intentHash,confirmationToken:p.confirmationToken}) : await mutate(p.scope==='all'?'resetAll':'resetTicket',{scope:p.scope,...(p.ticketId?{ticketId:p.ticketId}:{}),confirmationToken:p.confirmationToken,expectedAttendanceRevision:p.attendanceRevision,operationId:crypto.randomUUID(),...(p.reviewedAssignmentHash?{reviewedAssignmentHash:p.reviewedAssignmentHash}:{})});
+          const response = p.scope === 'correction' ? await mutate('retireCorrection',{correctionId:p.ticketId,expectedRosterRevision:p.rosterRevision,confirmationToken:p.confirmationToken,operationId:crypto.randomUUID()}) : p.scope === 'operation' ? await mutate('reviewOperation',{operationId:p.ticketId,decision:p.decision,intentHash:p.intentHash,confirmationToken:p.confirmationToken}) : await mutate(p.scope==='all'?'resetAll':'resetTicket',{scope:p.scope,...(p.ticketId?{ticketId:p.ticketId}:{}),confirmationToken:p.confirmationToken,expectedAttendanceRevision:p.attendanceRevision,operationId:crypto.randomUUID(),...(p.reviewedAssignmentHash?{reviewedAssignmentHash:p.reviewedAssignmentHash}:{})});
           if (!['Committed','Cancelled'].includes(response.state)) throw Error('Reset/review not verified.');
-          if (response.row || response.currentRow) showResult(response,'undo');
+          if (response.row || response.currentRow) showResult(response,(response.row||response.currentRow).Status==='Admitted'?'admitted':'undo');
           else if (response.state === 'Cancelled') { renderRelationship(null); renderResult({kind:'error',detail:'Operation Cancelled by Eve. No attendance change committed by this operation.'}); }
           message('Reset/review verified. History retained.'); await refreshRoster(); await loadAttention({discardDraft:false}); return response;
         } catch (err) { message(err.message); throw err; } finally { busy = false; await reconcileLatest(); }
@@ -163,6 +164,7 @@
         if (!isAdmin) { el('liveAttention').innerHTML=''; el('livePending').innerHTML=''; cancelReset(); }
       }
       el('liveAttention').addEventListener('input',event=>{draft=true;const form=event.target.closest('form');if(form&&event.target.name!=='includeRecord')form.querySelector('[name="includeRecord"]').checked=true;try{el('liveCorrectionDiff').textContent='Review selected changes before publishing:\n'+JSON.stringify(collectEdits().map(e=>({before:attention.records.find(r=>r.recordId===e.recordId).fields,after:e.fields})),null,2);}catch(err){el('liveCorrectionDiff').textContent=err.message;}});
+      el('liveAttention').addEventListener('click',event=>{if(event.target.dataset.retire)previewReset('correction',event.target.dataset.retire).catch(err=>message(err.message));});
       el('livePending').addEventListener('click',event=>{const target=event.target;if(target.dataset.review)reviewOperation(target.dataset.review,target.dataset.decision).catch(err=>message(err.message));if(target.dataset.drift)previewReset('ticket',target.dataset.drift,target.dataset.hash).catch(err=>message(err.message));});
       root.addEventListener?.('storage',()=>{el('undoLatestCheckIn').disabled=true;reconcileLatest();});
       updateUi(); return {submitTicket,undoLatest,loadAttention,publishCorrections,previewReset,confirmReset,cancelReset,reviewOperation,reconcileOperation,reconcileLatest,setMode,rename,updateUi,refreshAttention,

@@ -215,7 +215,32 @@ Official registry integrity: `sha512-jmxXvTCR/qZxMz2XwR6V+nL2BlDTD1aux7ZWSH9BV77
 
 Self-review coverage: source/roles and immutable targets -> Task 1; exact canonical roster/admin corrections -> Tasks 2/3; admission truth/mode/name -> Task 3; receipts/resets/reconciliation -> Task 4; automatic iPhone/multi-ticket guard -> Task 5; names/admin/helper/global UI -> Task 6; idempotent preparation/practice/operator instructions -> Task 7; independent/provider/hosted/physical release -> Task 8. All five Review Focus conditions have named task tests above.
 
-Current planning checkpoint: full existing suite freshly passed 323/323 with zero skipped on 2026-10-10. That baseline covers no new live behavior. Product source/provider/attendance remains unchanged while this plan awaits review.
+Planning baseline: 323/323 existing tests passed with zero skipped on 2026-10-10;
+that baseline covered no new live behavior.
+
+## Execution Checkpoint
+
+Tasks 1-6 are implemented locally; Task 7 local preparation/browser checks pass.
+The repaired candidate passes 429/429 tests with zero skipped. Independent
+reviews of 09cd4cc and bfd30d9 rejected their respective candidates; neither
+receipt is acceptance of the repaired candidate. A fresh immutable whole-branch
+review is required before deployment/publication. Task 8 is not complete.
+
+Review rulings extend only the existing recovery/correction contracts:
+`cancelUncommitted` verifies the original action/payload and actor, then either
+returns its current journal truth or reserves a durable Cancelled `Noop` marker.
+Helpers cannot reconcile admin mutations; no-op markers never grant undo or
+complete into attendance. This avoids treating a transient NotFound as proof
+that a delayed original POST cannot commit.
+Admin-only `retireCorrection` with preview scope `correction` retires an override
+whose source row was removed. It requires fresh roster/attendance hashes and
+confirmation, refuses active/Pending attendance and retains all physical history.
+It is not a source edit, automatic rebinding or attendance transfer.
+
+A separate undeployed school-owned practice project and private fictional
+workbook exist. Production source, accepted mirror and published main are
+unchanged. Provider endpoint/roles, physical-phone acceptance, native deployed
+parity, hosted bytes and production activation remain unproved.
 
 ## Execution Handoff
 

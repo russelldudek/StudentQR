@@ -34,7 +34,7 @@ function liveFixture(options = {}) {
   book('live-test',options.source||source());
   const ctx = vm.createContext({console,Date,JSON,Object,Array,String,Number,Map,Set,Error,Math,
     fetch(){throw Error('REAL NETWORK REFUSED');},
-    PropertiesService:{getScriptProperties:()=>({getProperty:k=>properties.get(k)??null,getProperties:()=>Object.fromEntries(properties),deleteProperty:k=>properties.delete(k),setProperty(k,v){check('property');properties.set(k,v);}})},
+    PropertiesService:{getScriptProperties:()=>({getProperty:k=>properties.get(k)??null,getProperties:()=>Object.fromEntries(properties),deleteProperty:k=>properties.delete(k),setProperty(k,v){check('property');if(options.maxPropertyBytes&&Buffer.byteLength(v)>options.maxPropertyBytes)throw Error('Property value quota');properties.set(k,v);}})},
     LockService:{getScriptLock:()=>({tryLock(){fault.onLock?.();if(locked)return false;locked=true;return true;},releaseLock(){locked=false;}})},
     Utilities:{getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,s)=>[...crypto.createHash('sha256').update(s).digest()]},
     Session:{getScriptTimeZone:()=> 'America/New_York'},

@@ -43,12 +43,12 @@ function liveFinishOperation_(context,operationId,status) {
   if (!finalOp || finalOp.state !== status) liveError_('Uncertain operation readback; reconcile original ID.');
   return finalContext;
 }
-function commitLiveOperation_(context,intent) {
+function commitLiveOperation_(context,intent,terminalState) {
   if (context.state.operations.some(function(o) { return o.operationId === intent.operationId; })) liveError_('Existing operation must be reconciled.');
   var timestamp = new Date().toISOString(), json = liveJson_(intent);
   liveWriteRows_(context,'audit',[[intent.operationId,intent.kind,intent.actorHash,json,hashLive_(json),timestamp,'Pending']]);
   liveWriteRows_(context,'attendance',intent.admissions); liveWriteRows_(context,'corrections',intent.corrections);
-  return liveFinishOperation_(context,intent.operationId,'Committed');
+  return liveFinishOperation_(context,intent.operationId,terminalState || 'Committed');
 }
 function liveCanUndo_(context,admission) {
   var latest = context.state.latestActors[admission.actorHash];
@@ -56,6 +56,10 @@ function liveCanUndo_(context,admission) {
     context.roster.subjects.some(function(s) { return s.ticketId === admission.ticketId && s.assignmentHash === admission.assignmentHash; }) && !context.roster.globallyPending;
 }
 function liveOwnedAdmission_(context,request,op) {
+  if (op.kind === 'Noop') {
+    if (!liveHex_(request.actorSecret) || !liveHex_(request.undoSecret) || hashLive_(request.actorSecret) !== op.actorHash || hashLive_(request.undoSecret) !== op.intent.noOpUndoHash) liveError_('No-op operation ownership proof refused.');
+    return null;
+  }
   var payload = op.intent.admissions[0];
   if (!payload && op.intent.revoke.length === 1) {
     context.state.operations.some(function(o) { payload = o.intent.admissions.find(function(p) { return p[0] === op.intent.revoke[0]; }); return !!payload; });
@@ -82,6 +86,21 @@ function getLiveOperation_(context,request) {
   if (!op) return {operationId:request.operationId,state:'NotFound',canUndo:false};
   if (context.role !== 'admin') liveOwnedAdmission_(context,request,op);
   return liveOperationResult_(context,op,request);
+}
+function cancelUncommittedLive_(context,request) {
+  var original = Object.assign({},request.originalPayload,{action:request.originalAction,eventId:context.event.eventId});
+  var actorHash = liveMutationActor_(context,original), requestHash = liveRequestHash_(original);
+  var existing = context.state.operations.find(function(op) { return op.operationId === original.operationId; });
+  if (existing) {
+    if (existing.actorHash !== actorHash || existing.intent.requestHash !== requestHash) liveError_('Original operation ownership/intent mismatch.');
+    return getLiveOperation_(context,Object.assign({},original,{actorSecret:original.actorSecret,undoSecret:original.undoSecret}));
+  }
+  // A durable terminal marker beats a late original POST under the same lock; NotFound alone does not.
+  var ticket = original.qrValue || (original.receipt && original.receipt.ticketId), intent = liveIntent_(context,original,'Noop',typeof ticket === 'string' && ticket ? [ticket] : []);
+  intent.originalAction = original.action;
+  if (['admit','undoLatest'].indexOf(original.action) >= 0) intent.noOpUndoHash = hashLive_(original.undoSecret);
+  var finalContext = commitLiveOperation_(context,intent,'Cancelled');
+  return liveOperationResult_(finalContext,finalContext.state.operations.find(function(op) { return op.operationId === original.operationId; }));
 }
 function liveReplayRequest_(context,request) {
   var op = context.state.operations.find(function(o) { return o.operationId === request.operationId; }); if (!op) return null;
@@ -172,6 +191,11 @@ function liveConfirmation_(context,preview) {
 function previewLiveReset_(context,request) {
   if (request.revision !== context.revision) liveError_('Stale admin revision.');
   var preview = {scope:request.scope,count:0,attendanceRevision:context.attendanceRevision,rosterRevision:context.rosterRevision,expiresAt:Date.now()+120000,requiresReview:false};
+  if (request.scope === 'correction') {
+    var retired = liveRetirableCorrection_(context,request.ticketId);
+    preview.ticketId = retired.correctionVersion; preview.count = retired.reservations.length;
+    return liveConfirmation_(context,preview);
+  }
   if (request.scope === 'operation') {
     var op = context.state.pending.find(function(o) { return o.operationId === request.ticketId; });
     if (!op) liveError_('Pending operation not found.');
@@ -181,12 +205,12 @@ function previewLiveReset_(context,request) {
   if (request.scope !== 'ticket' && request.scope !== 'all') liveError_('Invalid reset scope.');
   if (request.scope === 'all') {
     if (request.ticketId !== undefined) liveError_('All reset cannot include a ticket.');
-    preview.count = context.state.active.length; preview.admissionIds = context.state.active.map(function(a) { return a.admissionId; });
+    preview.count = context.state.active.length;
     preview.requiresReview = context.state.pending.length > 0 || liveAttendanceNeedsReview_(context).length > 0;
   } else {
     combinedLiteralIdentity_(request.ticketId,'Ticket'); preview.ticketId = request.ticketId;
     var active = context.state.active.filter(function(a) { return a.ticketId === request.ticketId; });
-    preview.count = active.length; preview.admissionIds = active.map(function(a) { return a.admissionId; });
+    preview.count = active.length;
     preview.currentAssignmentHash = liveCurrentAssignment_(context,request.ticketId);
     var drift = active.some(function(a) { return a.assignmentHash !== preview.currentAssignmentHash; });
     preview.requiresReview = context.state.pending.some(function(o) { return o.intent.tickets.indexOf(request.ticketId) >= 0 || ['Mode','ResetAll'].indexOf(o.kind) >= 0; }) ||
@@ -205,13 +229,30 @@ function liveReadConfirmation_(context,request,scope) {
   if (preview.attendanceRevision !== context.attendanceRevision || preview.rosterRevision !== context.rosterRevision) liveError_('Reset/review snapshot changed; stale confirmation.');
   return preview;
 }
+function liveRetirableCorrection_(context,correctionId) {
+  var record = context.roster.records.find(function(r) { return r.correctionVersion === correctionId && r.removedSource; });
+  if (!record || !liveId_(correctionId)) liveError_('Only a removed source correction can be retired. Reload Needs Attention.');
+  if (context.state.active.some(function(a) { return record.reservations.indexOf(a.ticketId) >= 0 || a.studentId === record.fields.studentId; }) ||
+      context.state.pending.some(function(o) { return o.intent.tickets.some(function(t) { return record.reservations.indexOf(t) >= 0; }); })) liveError_('Reset/review active or Pending attendance before retirement.');
+  return record;
+}
+function retireLiveCorrection_(context,request) {
+  if (request.expectedRosterRevision !== context.rosterRevision) liveError_('Stale retirement roster.');
+  liveReadConfirmation_(context,Object.assign({},request,{ticketId:request.correctionId}),'correction');
+  var record = liveRetirableCorrection_(context,request.correctionId), intent = liveIntent_(context,request,'Retire',record.reservations);
+  intent.retireCorrections = [request.correctionId];
+  var finalContext = commitLiveOperation_(context,intent);
+  return liveOperationResult_(finalContext,finalContext.state.operations.find(function(o) { return o.operationId === request.operationId; }));
+}
 function resetLiveTickets_(context,request) {
   var scope = request.action === 'resetAll' ? 'all' : 'ticket';
   if (request.scope !== scope || request.expectedAttendanceRevision !== context.attendanceRevision) liveError_('Stale attendance/reset scope.');
   var preview = liveReadConfirmation_(context,request,scope);
   if (preview.requiresReview || scope === 'all' && (context.state.pending.length || liveAttendanceNeedsReview_(context).length)) liveError_('Pending/Needs Review cannot be bypassed by Reset All.');
   if (preview.reviewedAssignmentHash && request.reviewedAssignmentHash !== preview.reviewedAssignmentHash) liveError_('Explicit current assignment review required.');
-  var ids = preview.admissionIds;
+  // Matching revisions prove the same snapshot; do not store hundreds of UUIDs in one property.
+  var ids = context.state.active.filter(function(a) { return scope === 'all' || a.ticketId === request.ticketId; }).map(function(a) { return a.admissionId; });
+  if (ids.length !== preview.count) liveError_('Reset count changed.');
   if (!Array.isArray(ids) || !ids.length || ids.some(function(id) { return !context.state.active.some(function(a) { return a.admissionId === id; }); })) liveError_('No confirmed active admissions to reset.');
   var tickets = context.state.active.filter(function(a) { return ids.indexOf(a.admissionId) >= 0; }).map(function(a) { return a.ticketId; });
   var intent = liveIntent_(context,request,scope === 'all'?'ResetAll':'ResetTicket',tickets); intent.revoke = ids.slice();
@@ -227,6 +268,7 @@ function reviewLiveOperation_(context,request) {
   var confirmation = liveReadConfirmation_(context,proofRequest,'operation');
   if (confirmation.ticketId !== op.operationId || confirmation.intentHash !== op.intentHash) liveError_('Wrong pending operation confirmation.');
   if (request.decision === 'complete') {
+    if (op.kind === 'Noop') liveError_('A no-op reservation must be cancelled, never completed.');
     if (context.state.pending.some(function(o) { return o.operationId !== op.operationId; })) liveError_('Review other Pending operations first.');
     if (op.kind === 'Admit') {
       var cleanRoster = buildLiveRoster_(context.source,Object.assign({},context.state,{pending:[]}));
@@ -247,6 +289,10 @@ function reviewLiveOperation_(context,request) {
       if (op.kind === 'ResetTicket' && revoked.some(function(a) { var hash = liveCurrentAssignment_(cleanAttendance,a.ticketId); return a.assignmentHash !== hash && op.intent.reviewedAssignmentHash !== hash; })) liveError_('Reset ticket assignment changed; individual review required.');
       if (op.kind === 'Undo' && (revoked[0].actorHash !== op.actorHash || !liveCanUndo_(cleanAttendance,revoked[0]))) liveError_('Undo is no longer the latest unchanged check-in; cancel and review.');
     }
+    if (op.kind === 'Retire') {
+      var cleanRetireState = Object.assign({},context.state,{pending:[]});
+      liveRetirableCorrection_(Object.assign({},context,{state:cleanRetireState,roster:buildLiveRoster_(context.source,cleanRetireState)}),op.intent.retireCorrections[0]);
+    }
     // Completion never invents a missing payload; incomplete staging must be cancelled.
   }
   var finalContext = liveFinishOperation_(context,op.operationId,request.decision === 'cancel'?'Cancelled':'Committed');
@@ -262,10 +308,11 @@ function dispatchLiveAction_(binding,event,role,request) {
     pending:context.state.pending.map(function(op) { return {operationId:op.operationId,kind:op.kind,intentHash:op.intentHash,tickets:op.intent.tickets}; }),
     attendanceReview:liveAttendanceNeedsReview_(context).map(function(a) { return {ticketId:a.ticketId,admissionId:a.admissionId,previousAssignmentHash:a.assignmentHash,currentAssignmentHash:liveCurrentAssignment_(context,a.ticketId)}; })};
   if (request.action === 'getOperation') return getLiveOperation_(context,request);
+  if (request.action === 'cancelUncommitted') return cancelUncommittedLive_(context,request);
   if (LIVE_MUTATIONS.indexOf(request.action) >= 0 && request.action !== 'reviewOperation') {
     var replay = liveReplayRequest_(context,request); if (replay) return replay; liveMutationFresh_(context,request);
   }
-  var handlers = {admit:admitLiveTicket_,publishCorrections:publishLiveCorrections_,setTestMode:setLiveMode_,saveEvent:renameLiveEvent_};
+  var handlers = {admit:admitLiveTicket_,publishCorrections:publishLiveCorrections_,retireCorrection:retireLiveCorrection_,setTestMode:setLiveMode_,saveEvent:renameLiveEvent_};
   if (typeof undoLiveLatest_ === 'function') handlers.undoLatest = undoLiveLatest_;
   if (typeof previewLiveReset_ === 'function') handlers.previewReset = previewLiveReset_;
   if (typeof resetLiveTickets_ === 'function') { handlers.resetTicket = resetLiveTickets_; handlers.resetAll = resetLiveTickets_; }

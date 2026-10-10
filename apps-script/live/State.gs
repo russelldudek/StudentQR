@@ -27,6 +27,8 @@ function liveValidateIntentShape_(intent,eventId) {
       (kind === 'Mode' ? typeof intent.testMode !== 'boolean' : intent.testMode !== undefined) ||
       (kind === 'Rename' ? typeof intent.eventName !== 'string' || !intent.eventName.trim() || intent.eventName.length > 120 || /[\u0000-\u001f]/.test(intent.eventName) : intent.eventName !== undefined) ||
       (intent.reviewedAssignmentHash !== undefined && (kind !== 'ResetTicket' || !liveHex_(intent.reviewedAssignmentHash)))) liveError_('Invalid operation kind/intent shape.');
+  if (kind === 'Retire' ? !Array.isArray(intent.retireCorrections) || intent.retireCorrections.length !== 1 || !liveId_(intent.retireCorrections[0]) : intent.retireCorrections !== undefined) liveError_('Invalid retired correction intent.');
+  if (kind === 'Noop' ? LIVE_MUTATIONS.indexOf(intent.originalAction) < 0 || intent.originalAction === 'reviewOperation' || t.length > 1 || (['admit','undoLatest'].indexOf(intent.originalAction) >= 0 && !liveHex_(intent.noOpUndoHash)) : intent.originalAction !== undefined || intent.noOpUndoHash !== undefined) liveError_('Invalid no-op intent.');
   a.forEach(function(p) {
     if (!Array.isArray(p) || p.length !== 10 || p.some(function(v) { return typeof v !== 'string'; }) ||
         !liveId_(p[0]) || p[1] !== intent.operationId || p[2] !== eventId || ['Student','Guest'].indexOf(p[3]) < 0 ||
@@ -56,15 +58,16 @@ function parseLiveState_(grids, eventId) {
     liveCorrectionFields_(liveParseJson_(r[5])); payloadIds[r[0]] = true;
   });
   audit.forEach(function(r,index) {
-    if (!liveId_(r[0]) || seen[r[0]] || ['Admit','Correct','Undo','ResetTicket','ResetAll','Mode','Rename'].indexOf(r[1]) < 0 ||
+    if (!liveId_(r[0]) || seen[r[0]] || ['Admit','Correct','Retire','Noop','Undo','ResetTicket','ResetAll','Mode','Rename'].indexOf(r[1]) < 0 ||
         !liveHex_(r[2]) || !liveHex_(r[4]) || hashLive_(r[3]) !== r[4] || !liveTimestamp_(r[5]) || ['Pending','Committed','Cancelled'].indexOf(r[6]) < 0) liveError_('Corrupt operation journal.');
     seen[r[0]] = true;
     var intent = liveParseJson_(r[3]);
-    liveExactKeys_(intent,['operationId','kind','actorHash','requestHash','tickets','admissions','corrections','revoke','testMode','eventName','reviewedAssignmentHash']);
+    liveExactKeys_(intent,['operationId','kind','actorHash','requestHash','tickets','admissions','corrections','revoke','testMode','eventName','reviewedAssignmentHash','retireCorrections','originalAction','noOpUndoHash']);
     if (intent.operationId !== r[0] || intent.kind !== r[1] || intent.actorHash !== r[2] || !liveHex_(intent.requestHash) ||
         !Array.isArray(intent.tickets) || intent.tickets.some(function(t) { return typeof t !== 'string' || !t; }) ||
         !Array.isArray(intent.admissions) || !Array.isArray(intent.corrections) || !Array.isArray(intent.revoke)) liveError_('Invalid operation intent.');
     liveValidateIntentShape_(intent,eventId);
+    if (intent.kind === 'Noop' && r[6] === 'Committed') liveError_('A no-op must terminate Cancelled.');
     var op = {operationId:r[0],kind:r[1],actorHash:r[2],intent:intent,intentHash:r[4],state:r[6],row:index+2,createdAt:r[5]};
     state.operations.push(op);
     if (op.state === 'Pending') { state.pending.push(op); return; }
@@ -83,13 +86,21 @@ function parseLiveState_(grids, eventId) {
       state.corrections = state.corrections.filter(function(c) { return c.sourceRow !== Number(payload[2]); });
       state.corrections.push({correctionId:payload[0],sourceRow:Number(payload[2]),baseHash:payload[3],fields:liveParseJson_(payload[5]),reservedTickets:intent.tickets.slice()});
     });
+    var revoked = intent.revoke.map(function(id) { return state.active.find(function(a) { return a.admissionId === id; }); });
+    if (revoked.some(function(a) { return !a; }) || liveJson_(revoked.map(function(a) { return a.ticketId; }).sort()) !== liveJson_(intent.tickets.slice().sort()) && intent.revoke.length) liveError_('Invalid revocation ticket correspondence.');
+    if (op.kind === 'Undo' && (revoked[0].actorHash !== op.actorHash || state.latestActors[op.actorHash].admissionId !== revoked[0].admissionId)) liveError_('Invalid undo actor/latest admission.');
+    if (op.kind === 'ResetAll' && revoked.length !== state.active.length) liveError_('Invalid all-ticket revocation snapshot.');
     intent.revoke.forEach(function(id) {
       if (!liveId_(id) || !state.active.some(function(a) { return a.admissionId === id; })) liveError_('Invalid admission revocation.');
       state.active = state.active.filter(function(a) { return a.admissionId !== id; });
     });
+    if (op.kind === 'Retire') {
+      if (!state.corrections.some(function(c) { return c.correctionId === intent.retireCorrections[0]; })) liveError_('Retired correction chain missing.');
+      state.corrections = state.corrections.filter(function(c) { return c.correctionId !== intent.retireCorrections[0]; });
+    }
     if (op.kind === 'Mode') { if (typeof intent.testMode !== 'boolean') liveError_('Invalid mode.'); state.testMode = intent.testMode; }
     if (op.kind === 'Rename') { if (typeof intent.eventName !== 'string' || !intent.eventName.trim()) liveError_('Invalid event name.'); state.eventName = intent.eventName; }
-    if (['Correct','Mode','Rename'].indexOf(op.kind) >= 0) state.sequence = index+1;
+    if (['Correct','Retire','Mode','Rename'].indexOf(op.kind) >= 0) state.sequence = index+1;
   });
   [['admissions',admissions],['corrections',corrections]].forEach(function(pair) {
     pair[1].forEach(function(payload) {

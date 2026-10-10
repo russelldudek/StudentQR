@@ -3,6 +3,8 @@ var LIVE_ACTION_FIELDS = Object.freeze({
   admit: ['qrValue','expectedAssignmentHash','expectedRosterRevision','operationId','actorSecret','undoSecret'],
   publishCorrections: ['edits','operationId','expectedRosterRevision'],
   getOperation: ['operationId','actorSecret','undoSecret'],
+  cancelUncommitted: ['originalAction','originalPayload'],
+  retireCorrection: ['correctionId','expectedRosterRevision','confirmationToken','operationId'],
   undoLatest: ['receipt','actorSecret','undoSecret','operationId'],
   previewReset: ['scope','ticketId','reviewedAssignmentHash'],
   resetTicket: ['scope','ticketId','confirmationToken','expectedAttendanceRevision','operationId','reviewedAssignmentHash'],
@@ -10,8 +12,8 @@ var LIVE_ACTION_FIELDS = Object.freeze({
   reviewOperation: ['operationId','decision','intentHash','confirmationToken'],
   setTestMode: ['testMode','operationId'], saveEvent: ['eventName','operationId']
 });
-var LIVE_ADMIN_ACTIONS = ['getAttention','publishCorrections','previewReset','resetTicket','resetAll','reviewOperation','setTestMode','saveEvent'];
-var LIVE_MUTATIONS = ['admit','publishCorrections','undoLatest','resetTicket','resetAll','reviewOperation','setTestMode','saveEvent'];
+var LIVE_ADMIN_ACTIONS = ['getAttention','publishCorrections','retireCorrection','previewReset','resetTicket','resetAll','reviewOperation','setTestMode','saveEvent'];
+var LIVE_MUTATIONS = ['admit','publishCorrections','retireCorrection','undoLatest','resetTicket','resetAll','reviewOperation','setTestMode','saveEvent'];
 function liveError_(message) { throw new Error(message); }
 function liveJson_(value) { return JSON.stringify(value); }
 function hashLive_(text) {
@@ -55,6 +57,7 @@ function authorizeLive_(event, request) {
   var hash = hashLive_(request.token), role = hash === event.adminHash ? 'admin' : hash === event.helperHash ? 'helper' : '';
   if (!role) liveError_('Private dance link not found.');
   if (LIVE_ADMIN_ACTIONS.indexOf(request.action) >= 0 && role !== 'admin') liveError_('Admin access required.');
+  if (request.action === 'cancelUncommitted' && LIVE_ADMIN_ACTIONS.indexOf(request.originalAction) >= 0 && role !== 'admin') liveError_('Admin access required for original operation.');
   return role;
 }
 function parseLiveRequest_(e, method) {
@@ -62,6 +65,11 @@ function parseLiveRequest_(e, method) {
   var r; try { r = JSON.parse(e.postData.contents); } catch (err) { liveError_('Invalid JSON request.'); }
   if (!r || !Object.prototype.hasOwnProperty.call(LIVE_ACTION_FIELDS, r.action)) liveError_('Unsupported live action.');
   liveExactKeys_(r, ['action','eventId','token','revision'].concat(LIVE_ACTION_FIELDS[r.action]));
+  if (r.action === 'cancelUncommitted') {
+    if (LIVE_MUTATIONS.indexOf(r.originalAction) < 0 || r.originalAction === 'reviewOperation') liveError_('Invalid original mutation.');
+    liveExactKeys_(r.originalPayload,LIVE_ACTION_FIELDS[r.originalAction]);
+    if (!liveId_(r.originalPayload.operationId)) liveError_('Original operation ID required.');
+  }
   if (!Number.isSafeInteger(r.revision) || r.revision < 1) liveError_('Invalid revision.');
   return r;
 }
