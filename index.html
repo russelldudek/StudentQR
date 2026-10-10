@@ -225,6 +225,9 @@
     }
     .camera-stage { position: relative; }
     .camera-stage::after { content: 'ONE TICKET ONLY'; position: absolute; inset: 12% 6%; border: 2px dashed #38bdf8; border-radius: 12px; color: #fff; padding: 6px; font-size: .75rem; text-shadow: 0 1px 3px #000; pointer-events: none; }
+    .live-record { border: 1px solid #475569; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .live-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 12px; }
+    .scan-feedback.scan-state-guest { background: #713f12; border-color: #facc15; color: #fefce8; }
     .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
     .tab.active { background: var(--accent); color: #052814; }
     .hidden { display: none; }
@@ -375,6 +378,14 @@
       <p class="muted" id="dashboardRosterStatus" role="status" aria-live="polite">Roster not loaded yet.</p>
       <div id="testModeBanner" class="hidden" style="margin-bottom:12px;"></div>
       <div class="stats" id="stats"></div>
+      <div id="liveAdminControls" class="hidden">
+        <h3>Eve's Ticket Controls</h3>
+        <p class="muted">Corrections publish to every scanner. The original intake stays unchanged. Attendance history is retained.</p>
+        <div class="row"><button id="loadLiveAttention" class="btn-secondary">Reload / Discard Draft</button><button id="publishLiveCorrections">Publish Corrections</button></div>
+        <div id="liveAttention"></div><pre id="liveCorrectionDiff" style="white-space:pre-wrap;overflow-wrap:anywhere;"></pre><div id="livePending"></div>
+        <div class="row"><input id="resetLiveTicketValue" placeholder="Exact ticket to reset" /><button id="previewLiveTicketReset" class="btn-danger">Reset Ticket</button><button id="previewLiveAllReset" class="btn-danger">Reset All Tickets</button></div>
+        <div id="liveAdminShare"></div>
+      </div>
       <div class="row" style="margin:12px 0;">
         <input id="searchInput" placeholder="Search by name or QR value" />
         <button id="refreshBtn" class="btn-secondary">Refresh</button>
@@ -434,16 +445,22 @@
             <div class="scan-name">Waiting for scan</div>
             <div class="scan-detail">Start the camera or enter a ticket value to validate the next student.</div>
           </div>
+          <div id="liveScanControls" class="hidden"><button id="undoLatestCheckIn" class="btn-secondary" disabled>Undo Last Check-In</button><button id="reconcileLastOperation" class="btn-secondary" disabled>Reconcile Unconfirmed Operation</button></div>
+          <p id="liveMessage" role="status" aria-live="polite"></p>
         </div>
       </div>
     </section>
   </div>
 
+  <div id="liveResetDialog" class="card hidden" role="alertdialog" aria-modal="true" aria-labelledby="liveResetWarning" style="position:fixed;inset:15% 5% auto;z-index:1000;max-height:70dvh;overflow:auto;border:4px solid #ef4444;">
+    <h2 id="liveResetWarning">ARE YOU SURE!?</h2><p>Only confirm the exact ticket/count shown. This warning expires after two minutes.</p><div class="row"><button id="cancelLiveReset" class="btn-secondary">Cancel</button><button id="confirmLiveReset" class="btn-danger">Yes, Confirm</button></div>
+  </div>
   <script src="assets/vendor/jsqr-1.4.0.js"></script>
   <script src="assets/zxing-0.21.3.min.js"></script>
   <script src="assets/vendor/qrcodejs-1.0.0.js"></script>
   <script src="assets/vendor/zxing-wasm-3.1.5/reader.js"></script>
   <script src="assets/ticket-decoder.js"></script>
+  <script src="assets/homecoming-live.js"></script>
   <script>
     const state = {
       config: null,
@@ -454,6 +471,10 @@
       softwareBarcodeReader: null,
       liveDecoder: null,
       scanGeneration: 0,
+      liveController: null,
+      liveControllerKey: '',
+      rosterRevision: '',
+      attendanceRevision: '',
       nextDecodeAt: 0,
       scanLoopId: null,
       scanCanvas: null,
@@ -590,8 +611,10 @@
       }
       if (state.config) {
         state.config.testMode = normalized;
-        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state.config));
-        rememberProfile(state.config);
+        if (!isLiveProtocol()) {
+          localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state.config));
+          rememberProfile(state.config);
+        }
       }
       if (ids('testMode')) {
         ids('testMode').checked = normalized;
@@ -647,7 +670,7 @@
         .replace(/=+$/g, '');
     }
 
-    function validateSharedConfig(cfg) {
+    function validateSharedConfig(cfg, { authenticatedLive = false } = {}) {
       if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('Invalid shared setup payload.');
       const normalizedCfg = {};
       for (const field of SHARE_CONFIG_FIELDS) {
@@ -671,7 +694,10 @@
         normalizedCfg.allowedStatuses = cfg.allowedStatuses.slice();
       }
       if (cfg.rosterMode !== undefined || cfg.environment !== undefined) {
-        if (cfg.rosterMode !== 'homecoming-2026' || cfg.environment !== 'mirror-test') throw new Error('Unsupported roster environment.');
+        const live = cfg.apiVersion === 2 && ['production', 'live-test'].includes(cfg.environment);
+        if (cfg.rosterMode !== 'homecoming-2026' || (!live && cfg.environment !== 'mirror-test')) throw new Error('Unsupported roster environment.');
+        if (live && !authenticatedLive) throw new Error('Live configuration requires an authenticated private event.');
+        if (live) normalizedCfg.apiVersion = 2;
         normalizedCfg.rosterMode = cfg.rosterMode;
         normalizedCfg.environment = cfg.environment;
       }
@@ -818,7 +844,7 @@
         throw new Error('Server did not confirm the shared dance. Redeploy the updated Apps Script backend.');
       }
       if (data.role === 'admin' && !/^[a-f0-9]{64}$/.test(data.helperToken || '')) throw new Error('Server did not confirm the helper link.');
-      const config = validateSharedConfig(data.config);
+      const config = validateSharedConfig(data.config, { authenticatedLive: data.config?.apiVersion === 2 });
       if (config.apiUrl !== access.apiUrl) throw new Error('Shared dance endpoint mismatch.');
       return config;
     }
@@ -859,6 +885,11 @@
     }
 
     async function publishSharedEvent() {
+      if (isLiveProtocol()) {
+        try { await ensureLiveController().rename(ids('eventName').value); toast('Dance name updated globally.'); }
+        catch (err) { toast(err.message, false); }
+        return;
+      }
       if (state.eventSaving || state.eventLoading || state.admissionInFlight || state.testModePending) return;
       if (state.eventAccess && state.eventAccess.role !== 'admin') return;
       if (window.location.protocol === 'file:') {
@@ -911,6 +942,7 @@
 
     function applyConfig(cfg, options = {}) {
       if (!cfg) return;
+      if (cfg.apiVersion === 2 && (!state.eventAccess || state.eventAccess.apiUrl !== cfg.apiUrl)) throw new Error('Live configuration requires an authenticated private event.');
       const normalizedCfg = normalizeConfigTestMode(cfg);
       const rosterChanged = rosterConfigKey(state.config) !== rosterConfigKey(normalizedCfg);
       if (rosterChanged) {
@@ -948,7 +980,8 @@
     }
 
     function updateEventTitles(cfg = state.config) {
-      const title = cfg?.eventName ? `Dance: ${cfg.eventName}` : 'No dance selected.';
+      const environment = cfg?.apiVersion === 2 ? (cfg.environment === 'live-test' ? 'Practice - Not Real Attendance' : cfg.testMode ? 'READ-ONLY' : 'LIVE') : '';
+      const title = cfg?.eventName ? `Dance: ${cfg.eventName}${environment ? ' | ' + environment : ''}` : 'No dance selected.';
       ids('dashboardEventTitle').textContent = title;
       ids('scannerEventTitle').textContent = title;
     }
@@ -971,6 +1004,12 @@
         : 'Admin view: configure the dance once, keep Eve\'s admin URL private, and share only the helpers\' QR.';
       if (sharedMode && !ids('setup').classList.contains('hidden')) {
         setTab('scanner', { bypassLock: true });
+      }
+      if (isLiveProtocol()) {
+        ensureLiveController()?.updateUi();
+        if (state.eventAccess?.role === 'admin') ids('liveAdminShare').appendChild(ids('helperQr'));
+      } else {
+        ids('liveAdminControls').classList.add('hidden'); ids('liveScanControls').classList.add('hidden');
       }
     }
 
@@ -1013,6 +1052,10 @@
     }
 
     async function setGlobalTestMode(enabled, options = {}) {
+      if (isLiveProtocol()) {
+        try { await ensureLiveController().setMode(enabled); return true; }
+        catch (err) { ids('testMode').checked = state.config.testMode; toast(err.message, false); return false; }
+      }
       const cfg = state.config || getConfigFromInputs();
       if (state.admissionInFlight || state.testModePending) {
         ids('testMode').checked = Boolean(cfg.testMode);
@@ -1468,17 +1511,19 @@
           syncEffectiveTestMode(data.testMode);
         }
         state.rows = normalizeRows(rows, cfg);
-        state.quarantinedRecordCount = Number.isInteger(data.quarantinedRecordCount) && data.quarantinedRecordCount >= 0 ? data.quarantinedRecordCount : 0;
+        state.rosterRevision = data.rosterRevision || ''; state.attendanceRevision = data.attendanceRevision || '';
+        state.quarantinedRecordCount = Number.isInteger(data.quarantineCount ?? data.quarantinedRecordCount) ? (data.quarantineCount ?? data.quarantinedRecordCount) : 0;
         if (state.scannerRelationshipTicket) {
           const current = state.rows.find(row => row.qr === state.scannerRelationshipTicket);
           renderScannerRelationship(current && !['Pending', 'Needs Review', 'Quarantined'].includes(current.status) ? current : null);
         }
         state.rosterLoaded = true;
         state.rosterError = '';
-        const activeCount = state.rows.filter(row => row.status !== 'Quarantined').length;
+        const activeCount = state.rows.filter(row => !['Quarantined', 'Blocked'].includes(row.status)).length;
         const quarantineNotice = state.quarantinedRecordCount ? ` ${state.quarantinedRecordCount} source records quarantined; their tickets are blocked.` : '';
         renderRosterStatus((activeCount ? `Roster: ${activeCount} ${cfg.rosterMode === 'homecoming-2026' ? 'ticket holders' : `student${activeCount === 1 ? '' : 's'}`}.` : 'No students on the roster.') + quarantineNotice);
         renderDashboard();
+        if (isLiveProtocol()) { await ensureLiveController()?.reconcileLatest(); await ensureLiveController()?.refreshAttention(); }
         if (!options.silent) {
           toast(activeCount ? `Loaded ${activeCount} ${cfg.rosterMode === 'homecoming-2026' ? 'ticket holders' : 'students'}.${quarantineNotice}` : 'No students on the roster.', Boolean(activeCount));
         }
@@ -1580,7 +1625,7 @@
 
     function renderScannerRelationship(row) {
       state.scannerRelationshipTicket = row?.qr || '';
-      if (!row || ['Pending', 'Needs Review', 'Quarantined'].includes(row.status)) { updateScannerGuestFlag(false, ''); return; }
+      if (!row || ['Pending', 'Needs Review', 'Quarantined', 'Blocked'].includes(row.status)) { updateScannerGuestFlag(false, ''); return; }
       if (!row.personType) { updateScannerGuestFlag(row.bringingGuest, row.guestValue || ''); return; }
       const target = ids('scannerGuestFlag');
       target.className = row.linkedTicketId ? 'scanner-guest-flag' : 'stat';
@@ -1592,6 +1637,34 @@
     function candidateSnapshot(row) { return row ? JSON.stringify(row.raw) : ''; }
 
     function isLiveProtocol() { return state.config?.apiVersion === 2; }
+
+    function ensureLiveController() {
+      if (!isLiveProtocol() || !state.eventAccess || !window.StudentQrLive) return null;
+      const key = JSON.stringify([state.eventAccess.apiUrl, state.eventAccess.eventId]);
+      if (state.liveController && state.liveControllerKey === key) return state.liveController;
+      state.liveControllerKey = key;
+      state.liveController = window.StudentQrLive.create({
+        request: (action, payload) => {
+          if (JSON.stringify([state.eventAccess?.apiUrl, state.eventAccess?.eventId]) !== key) throw new Error('Private dance changed before request.');
+          return eventRequest(action, state.eventAccess, payload);
+        },
+        getSnapshot: () => ({ config: state.config, access: state.eventAccess, rows: state.rows.map(row => row.raw),
+          rosterRevision: state.rosterRevision, attendanceRevision: state.attendanceRevision, scanGeneration: state.scanGeneration, hidden: document.hidden }),
+        refreshRoster: () => loadRoster({ silent: true }), escapeHtml, elements: ids, storage: localStorage,
+        renderRelationship: raw => renderScannerRelationship(raw ? normalizeRows([raw], state.config)[0] : null),
+        renderResult: ({ kind, row, ticket, detail = '' }) => {
+          const normalized = row ? normalizeRows([row], state.config)[0] : null;
+          const warning = kind === 'test' || normalized?.bringingGuest || normalized?.personType === 'Guest';
+          const error = ['error', 'duplicate'].includes(kind); const undo = kind === 'undo';
+          setScreenAlert(error ? 'error' : undo ? 'idle' : warning ? 'warning' : 'success');
+          renderScanResultCard({ stateClass: error ? 'scan-state-blocked' : undo ? 'scan-state-idle' : warning ? 'scan-state-guest' : 'scan-state-success',
+            kicker: kind === 'duplicate' ? 'Already Scanned' : kind === 'error' ? 'Cannot Admit' : undo ? 'Not Checked In' : kind === 'test' ? 'Read-Only Test' : 'Admitted',
+            name: normalized?.name || 'Ticket not confirmed', detail: detail || (kind === 'test' ? 'No attendance update requested.' : ''),
+            status: row?.Status || (error ? 'Not confirmed' : 'Not Checked In'), qrValue: row?.QR_ID || ticket || '', admittedAt: row?.['Admitted At'] || '' });
+        }
+      });
+      return state.liveController;
+    }
 
     async function processLiveDecodedTicket(ticket, source, generation) {
       if (!isLiveProtocol() || generation !== state.scanGeneration || document.hidden) return;
@@ -1761,6 +1834,11 @@
     }
 
     async function admitByQr(qrValue, options = {}) {
+      if (isLiveProtocol()) {
+        const controller = ensureLiveController();
+        if (!controller) { setScreenAlert('error'); renderScannerRelationship(null); renderScanResultCard({stateClass:'scan-state-blocked',kicker:'Cannot Admit',name:'Live module unavailable',detail:'Reload or ask Eve. No attendance requested.',status:'Not confirmed',qrValue,admittedAt:''}); return; }
+        return controller.submitTicket(qrValue, options.source || 'manual', options.scanGeneration);
+      }
       qrValue = typeof qrValue === 'string' ? qrValue.trim() : '';
       if (state.admissionInFlight) return;
       state.admissionInFlight = true;
@@ -2302,6 +2380,14 @@
     }
 
     function bindEvents() {
+      ids('undoLatestCheckIn').addEventListener('click', () => ensureLiveController()?.undoLatest());
+      ids('reconcileLastOperation').addEventListener('click', () => ensureLiveController()?.reconcilePending().catch(err => toast(err.message, false)));
+      ids('loadLiveAttention').addEventListener('click', () => ensureLiveController()?.loadAttention({ discardDraft: true }).catch(err => toast(err.message, false)));
+      ids('publishLiveCorrections').addEventListener('click', () => ensureLiveController()?.publishCorrections().catch(err => toast(err.message, false)));
+      ids('previewLiveTicketReset').addEventListener('click', () => ensureLiveController()?.previewReset('ticket', ids('resetLiveTicketValue').value).catch(err => toast(err.message, false)));
+      ids('previewLiveAllReset').addEventListener('click', () => ensureLiveController()?.previewReset('all').catch(err => toast(err.message, false)));
+      ids('confirmLiveReset').addEventListener('click', () => ensureLiveController()?.confirmReset().catch(err => toast(err.message, false)));
+      ids('cancelLiveReset').addEventListener('click', () => ensureLiveController()?.cancelReset());
       document.querySelectorAll('.tab').forEach((btn) => {
         btn.addEventListener('click', () => setTab(btn.dataset.tab, { fallbackTab: 'scanner' }));
       });
@@ -2368,6 +2454,8 @@
         if (!document.hidden) triggerRosterSync();
       });
       window.addEventListener('focus', triggerRosterSync);
+      window.addEventListener('pagehide', () => { if (isLiveProtocol()) stopScanning(); });
+      window.addEventListener('orientationchange', () => { if (isLiveProtocol()) stopScanning(); });
     }
 
     loadSavedConfig();
