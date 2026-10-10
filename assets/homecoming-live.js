@@ -5,7 +5,7 @@
   root.StudentQrLive = {
     create({request,getSnapshot,refreshRoster,renderResult,renderRelationship,escapeHtml,elements,storage}) {
       const initial = getSnapshot(), namespace = 'studentQrLive:'+JSON.stringify([initial.access.apiUrl,initial.access.eventId])+':';
-      let busy = false, resetPreview = null, attention = null, draft = false;
+      let busy = false, resetPreview = null, attention = null, draft = false, lastResult = null;
       const el = elements;
       const get = k => { try { const s = storage.getItem(namespace+k); return s ? JSON.parse(s) : null; } catch { return null; } };
       function put(k,value) { const json = JSON.stringify(value); storage.setItem(namespace+k,json); if (storage.getItem(namespace+k) !== json) throw Error('Device storage unavailable. No new operation dispatched.'); }
@@ -13,13 +13,23 @@
       function actor() { let value = get('actor'); if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) { value = secret(); put('actor',value); } return value; }
       function current() { const s = getSnapshot(); if (s.config?.apiVersion !== 2 || s.access?.apiUrl !== initial.access.apiUrl || s.access?.eventId !== initial.access.eventId) throw Error('Dance changed. Reload before continuing.'); return s; }
       function message(text) { el('liveMessage').textContent = text; }
-      function failure(err,ticket='') { renderRelationship(null); renderResult({kind:'error',ticket,detail:err.message||'Operation not confirmed.'}); message(err.message||'Operation not confirmed.'); }
+      function failure(err,ticket='') { lastResult=null; renderRelationship(null); renderResult({kind:'error',ticket,detail:err.message||'Operation not confirmed.'}); message(err.message||'Operation not confirmed.'); }
       function showResult(response,kind) {
         const row = response.row || response.currentRow;
         if (!row && kind !== 'reset') throw Error('Server did not verify the ticket result.');
+        lastResult = row ? {row,kind:response.alreadyAdmitted?'duplicate':response.testMode?'test':kind} : null;
         renderRelationship(row||null); renderResult({kind:response.alreadyAdmitted?'duplicate':response.testMode?'test':kind,row});
       }
+      function refreshResult() {
+        if (!lastResult) return;
+        const previous=lastResult, row=current().rows.find(r=>r.QR_ID===previous.row.QR_ID);
+        if (!row || row.quarantined || row.assignmentHash!==previous.row.assignmentHash) { failure(Error('Ticket assignment changed. Ask Eve before scanning again.'),previous.row.QR_ID); return; }
+        const kind=row.Status==='Admitted'?(previous.kind==='duplicate'?'duplicate':'admitted'):getSnapshot().config.testMode?'test':'undo';
+        showResult({row},kind);
+      }
       async function mutate(action,payload) {
+        const pending=get('pending');
+        if (pending && !(action==='reviewOperation' && pending===payload.operationId)) throw Error('Reconcile the previous operation before another mutation.');
         const record = {action,payload};
         if (action !== 'reviewOperation' || !get('operation:'+payload.operationId)) put('operation:'+payload.operationId,record);
         put('pending',payload.operationId);
@@ -156,7 +166,7 @@
         admin(); if (busy) throw Error('Finish the current operation first.'); busy = true;
         try { const response = await mutate('setTestMode',{testMode:enabled,operationId:crypto.randomUUID()}); await refreshRoster(); return response; } finally { busy=false; }
       }
-      async function rename(eventName) { admin(); const response = await mutate('saveEvent',{eventName,operationId:crypto.randomUUID()}); await refreshRoster(); return response; }
+      async function rename(eventName) { admin(); if(busy) throw Error('Finish the current operation first.'); busy=true; try { const response = await mutate('saveEvent',{eventName,operationId:crypto.randomUUID()}); await refreshRoster(); return response; } finally {busy=false;} }
       async function refreshAttention() { if (getSnapshot().access.role === 'admin' && !draft) { try { await loadAttention(); } catch (err) { message(err.message); } } }
       function updateUi() {
         const s = getSnapshot(), isAdmin = s.access.role==='admin'; el('liveAdminControls').classList.toggle('hidden',!isAdmin); el('liveScanControls').classList.remove('hidden');
@@ -167,7 +177,7 @@
       el('liveAttention').addEventListener('click',event=>{if(event.target.dataset.retire)previewReset('correction',event.target.dataset.retire).catch(err=>message(err.message));});
       el('livePending').addEventListener('click',event=>{const target=event.target;if(target.dataset.review)reviewOperation(target.dataset.review,target.dataset.decision).catch(err=>message(err.message));if(target.dataset.drift)previewReset('ticket',target.dataset.drift,target.dataset.hash).catch(err=>message(err.message));});
       root.addEventListener?.('storage',()=>{el('undoLatestCheckIn').disabled=true;reconcileLatest();});
-      updateUi(); return {submitTicket,undoLatest,loadAttention,publishCorrections,previewReset,confirmReset,cancelReset,reviewOperation,reconcileOperation,reconcileLatest,setMode,rename,updateUi,refreshAttention,
+      updateUi(); return {submitTicket,undoLatest,loadAttention,publishCorrections,previewReset,confirmReset,cancelReset,reviewOperation,reconcileOperation,reconcileLatest,setMode,rename,updateUi,refreshAttention,refreshResult,
         reconcilePending:()=>reconcileOperation(get('pending'))};
     }
   };

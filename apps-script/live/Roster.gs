@@ -67,7 +67,17 @@ function buildLiveRoster_(rawValues,state) {
       var active = state.active.find(function(a) { return a.ticketId === s.ticketId; });
       if (active && active.assignmentHash !== s.assignmentHash) r.issues.push('Attendance assignment changed; explicit ticket review/reset required.');
     });
+    var drift = state.active.filter(function(a) {
+      return (a.studentId === r.fields.studentId || r.reservations.indexOf(a.ticketId) >= 0) &&
+        !r.subjects.some(function(s) { return s.ticketId === a.ticketId && s.assignmentHash === a.assignmentHash; });
+    });
+    if (drift.length) {
+      r.issues.push('Attendance assignment changed; explicit ticket review/reset required.');
+      r.reservations = Array.from(new Set(r.reservations.concat(drift.map(function(a) { return a.ticketId; }))));
+    }
   });
+  // An orphaned active assignment cannot be safely associated with any replacement person.
+  var globallyNeedsReview = state.active.some(function(a) { return !records.some(function(r) { return r.subjects.some(function(s) { return s.ticketId === a.ticketId && s.assignmentHash === a.assignmentHash; }); }); });
   var blockedTickets = extraReservations.slice(), subjects = [], attention = [];
   records.forEach(function(r,index) {
     if (r.issues.length) {
@@ -88,7 +98,7 @@ function buildLiveRoster_(rawValues,state) {
       linkedPersonType:other?other.personType:'',linkedName:other?other.fullName:'',linkedTicketId:other?other.ticketId:'',linkedStatus:linkedActive?'Admitted':'',linkedAdmittedAt:linkedActive?linkedActive.admittedAt:''};
   });
   blockedTickets.forEach(function(t) { rows.push({'First Name':'Needs Attention','Last Name':'',QR_ID:t,Status:'Blocked','Admitted At':'','Bringing Guest':'No',quarantined:true,personType:'Blocked'}); });
-  return {subjects:subjects,rows:rows,attention:attention,records:records,blockedTickets:blockedTickets,globallyPending:globallyPending,
+  return {subjects:subjects,rows:rows,attention:attention,records:records,blockedTickets:blockedTickets,globallyPending:globallyPending,globallyNeedsReview:globallyNeedsReview,
     rosterRevision:hashLive_(liveJson_([rawValues,state.corrections]))};
 }
 function livePublicRows_(context) { return context.roster.rows; }

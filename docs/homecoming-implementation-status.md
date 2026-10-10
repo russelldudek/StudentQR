@@ -7,19 +7,22 @@ Eve's correction layer, automatic single-ticket check-in, latest-device undo,
 and audited Eve-only single/all resets. Original intake and accepted mirror
 remain unchanged. See `docs/homecoming-live-runbook.md` for operation/release gates.
 
-Fresh independent review rejected candidate 09cd4cc with eight reproduced
-defects. Regression repairs now pass 418/418 tests, zero skipped, including
-exact browser request bodies, Pending reset safety, orphan journal refusal,
-terminal cancellation recovery and two distinct Code128 tickets. A new freeze
-and independent repair review are required before release.
+Independent reviews rejected 09cd4cc, bfd30d9 and a3ee375 with 8, 5 and 4
+reproduced defects respectively. Their repairs now pass 433/433 tests, zero
+skipped, including read-only undo refusal, changed-ticket double-admission
+prevention, preserved Pending recovery and current scan-card refresh. The final
+repair review and provider/hosted release checks remain required.
 
 Native loopback practice checks verified correction propagation, automatic
 photo admission, guest/host display, duplicate rejection, helper undo and
 Eve's reset warnings/Cancel/confirmation. A separate school-owned practice
-project is staged but not deployed/executed. The repaired modules have not yet
-been saved there. New provider/OAuth access, practice physical-phone checks,
+project is staged but not deployed. Its fictional-only preparation function
+completed and the private practice workbook was verified; the final repaired
+modules have not yet been saved there. New provider/OAuth access,
 production binding/role and hosted-byte parity remain unverified. No new
 production URL, private key, activation or real attendance mutation is claimed.
+The human now requests release within 15 minutes and accepts Core's tests
+instead of additional physical-phone acceptance; no iPhone proof is inferred.
 
 ## Local Source
 

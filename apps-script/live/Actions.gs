@@ -52,7 +52,7 @@ function commitLiveOperation_(context,intent,terminalState) {
 }
 function liveCanUndo_(context,admission) {
   var latest = context.state.latestActors[admission.actorHash];
-  return !!latest && latest.admissionId === admission.admissionId && context.state.active.some(function(a) { return a.admissionId === admission.admissionId; }) &&
+  return !context.config.testMode && !!latest && latest.admissionId === admission.admissionId && context.state.active.some(function(a) { return a.admissionId === admission.admissionId; }) &&
     context.roster.subjects.some(function(s) { return s.ticketId === admission.ticketId && s.assignmentHash === admission.assignmentHash; }) && !context.roster.globallyPending;
 }
 function liveOwnedAdmission_(context,request,op) {
@@ -112,6 +112,7 @@ function liveReplayRequest_(context,request) {
 function liveMutationFresh_(context,request) {
   if (request.revision !== context.revision) liveError_('Stale configuration revision; refresh.');
   if (context.roster.globallyPending) liveError_('Global Pending operation requires Eve review.');
+  if (['admit','undoLatest'].indexOf(request.action)>=0 && context.roster.globallyNeedsReview) liveError_('Changed attendance assignment requires Eve review/reset before scanning.');
 }
 function admitLiveTicket_(context,request) {
   combinedLiteralIdentity_(request.qrValue,'Ticket');

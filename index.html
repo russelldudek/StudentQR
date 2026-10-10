@@ -1524,7 +1524,7 @@
         const quarantineNotice = state.quarantinedRecordCount ? ` ${state.quarantinedRecordCount} source records quarantined; their tickets are blocked.` : '';
         renderRosterStatus((activeCount ? `Roster: ${activeCount} ${cfg.rosterMode === 'homecoming-2026' ? 'ticket holders' : `student${activeCount === 1 ? '' : 's'}`}.` : 'No students on the roster.') + quarantineNotice);
         renderDashboard();
-        if (isLiveProtocol()) { await ensureLiveController()?.reconcileLatest(); await ensureLiveController()?.refreshAttention(); }
+        if (isLiveProtocol()) { ensureLiveController()?.refreshResult(); await ensureLiveController()?.reconcileLatest(); await ensureLiveController()?.refreshAttention(); }
         if (!options.silent) {
           toast(activeCount ? `Loaded ${activeCount} ${cfg.rosterMode === 'homecoming-2026' ? 'ticket holders' : 'students'}.${quarantineNotice}` : 'No students on the roster.', Boolean(activeCount));
         }
