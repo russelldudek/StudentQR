@@ -4,8 +4,9 @@
 
 Implemented on `codex/homecoming-mirror-backend` in the original project folder.
 The earlier accepted scanner/private-event baseline was preserved in `ef07ed5`.
-There was no GitHub push, Google deployment, private-link publication, production
-activation, or production attendance write.
+The initial local checkpoint had no provider deployment. The actual mirror-only
+deployment and initialization described below are now complete under specific
+human approvals. Production activation and attendance writes remain excluded.
 
 New backend modules supply exact bidirectional student/guest joins, strict
 assignment-aware attendance validation, locked Pending-to-Admitted writes with
@@ -17,7 +18,8 @@ separate Code.gs-only deployment.
 The frontend adds exact same-origin endpoint registry trust before bearer key
 transmission, software camera/photo candidate confirmation, immutable ticket
 mapping, separate student/guest statuses, and persistent Mirror Test labels.
-The registry is intentionally empty until a real mirror endpoint is verified.
+The registry now contains exactly the verified mirror deployment's `/exec` URL.
+Private keys and roster records are not included in public source.
 
 ## Synthetic Runtime
 
@@ -82,16 +84,31 @@ The dedicated school-owned mirror API project now contains all three modules.
 Owner preparation created the distinct private mirror; direct connector reads
 confirmed the same counts, fictional-only names/IDs, matching prepared snapshot,
 zero formulas and an empty Check-ins ledger. Drive permission metadata reports
-only Eve's school-account owner, with shared=false. Its binding remains prepared,
-not ready; no event keys or public web deployment have been created.
+only Eve's school-account owner, with shared=false. The private mirror ID is
+`1830rSf7hcYX2NUUMG5GByGqTT2626PS4gnJuYf9TjdI`.
 
-Provision the private mirror through the owner-only preparation function, then
-obtain the specific Google access/deployment/publication approvals in the phone
-test runbook. Do not substitute the synthetic preview for that real mirror.
+Russ explicitly approved the dedicated mirror-only Web App deployment as Eve
+with Anyone access. Google confirmed version 1 at the endpoint now pinned in the
+trusted registry. The editor initially returned `/dev` during owner initialization;
+the guard refused it before issuing keys. An owner-only Script Property now pins
+the verified `/exec` URL, with malformed and changed endpoints refused. Public
+deployment version 1 retains the accepted 319 candidate; only editor-only
+initialization/recovery changed in the 323 candidate.
+
+Initialization completed with a ready mirror binding, event
+`d1221560-4dfb-4876-b9b8-5f9c99743ece`, distinct private admin/helper credentials
+and global read-only mode true. Persisted properties independently match the
+private link credentials and mirror target. No raw admin credential is stored.
+The public unauthenticated `list` request returns `Private dance link not found.`
+Private keys were inspected in the owner debugger without logging or publishing
+them. GitHub Pages publication was separately approved; fresh hosted and physical
+phone checks are not inferred from the backend initialization.
+
+Do not substitute the synthetic preview for the actual private mirror.
 
 ## Final Local Gate
 
-The current full scanner suite passes **319/319** tests. Independent review's
+The current full scanner suite passes **323/323** tests. Independent review's
 five original findings and two quarantine findings received regression tests
 observed failing before their fixes and passing afterward. The quarantine
 checks cover duplicate pairs, ambiguous/padded codes, spreadsheet ticket errors,
@@ -101,4 +118,9 @@ blank student name, contradictory guest declaration and control characters,
 without returning raw identity values. `git diff --check` passes. Browser checks additionally confirmed visible
 quarantine notices and rejection in both modes, separate guest admission and
 same-timestamp duplicate rejection across tabs. Physical iPhone validation and
-hosted/provider proof remain outstanding.
+hosted-role proof remain outstanding. The immutable 319 candidate was accepted
+after independent 319-test and 22-probe review. A separate bounded native review
+of the new owner URL resolver found no actionable findings and independently
+passed all 28 mirror tests. Its four new regressions were observed RED then GREEN.
+The singleton trusted-registry endpoint was checked against the actual deployment
+dialog. These scopes are distinct from any further root-level delta acceptance.
