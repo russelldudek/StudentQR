@@ -132,6 +132,106 @@ function renameLiveEvent_(context,request) {
   var finalContext = commitLiveOperation_(context,intent);
   return liveOperationResult_(finalContext,finalContext.state.operations.find(function(o) { return o.operationId === request.operationId; }));
 }
+function undoLiveLatest_(context,request) {
+  liveExactKeys_(request.receipt,['admissionId','operationId','ticketId','assignmentHash']);
+  var receipt = request.receipt, op = context.state.operations.find(function(o) { return o.operationId === receipt.operationId && o.kind === 'Admit' && o.state === 'Committed'; });
+  if (!op) liveError_('Undo receipt not found.');
+  var payload = liveOwnedAdmission_(context,request,op);
+  if (payload[0] !== receipt.admissionId || liveParseJson_(payload[4]) !== receipt.ticketId || payload[6] !== receipt.assignmentHash) liveError_('Undo receipt mismatch.');
+  var active = context.state.active.find(function(a) { return a.admissionId === receipt.admissionId; });
+  if (!active || !liveCanUndo_(context,active)) liveError_('Only your latest active check-in can be undone; ask Eve.');
+  var intent = liveIntent_(context,request,'Undo',[receipt.ticketId]); intent.revoke = [receipt.admissionId];
+  var finalContext = commitLiveOperation_(context,intent), result = liveOperationResult_(finalContext,finalContext.state.operations.find(function(o) { return o.operationId === request.operationId; }));
+  result.row = result.currentRow; return result;
+}
+function liveCurrentAssignment_(context,ticketId) {
+  var current;
+  context.roster.records.some(function(r) { current = r.subjects.find(function(s) { return s.ticketId === ticketId; }); return !!current; });
+  return current ? current.assignmentHash : hashLive_('absent:'+ticketId+':'+context.rosterRevision);
+}
+function liveAttendanceNeedsReview_(context) {
+  return context.state.active.filter(function(a) { return !context.roster.subjects.some(function(s) { return s.ticketId === a.ticketId && s.assignmentHash === a.assignmentHash; }); });
+}
+function liveConfirmation_(context,preview) {
+  var token = hashLive_(Utilities.getUuid()+Utilities.getUuid()+Utilities.getUuid()), key = 'studentQrLiveConfirmation:'+hashLive_(token);
+  var stored = Object.assign({},preview,{eventId:context.event.eventId,adminHash:context.event.adminHash});
+  PropertiesService.getScriptProperties().setProperty(key,liveJson_(stored));
+  if (PropertiesService.getScriptProperties().getProperty(key) !== liveJson_(stored)) liveError_('Confirmation readback failed.');
+  return Object.assign({},preview,{confirmationToken:token});
+}
+function previewLiveReset_(context,request) {
+  if (request.revision !== context.revision) liveError_('Stale admin revision.');
+  var preview = {scope:request.scope,count:0,attendanceRevision:context.attendanceRevision,rosterRevision:context.rosterRevision,expiresAt:Date.now()+120000,requiresReview:false};
+  if (request.scope === 'operation') {
+    var op = context.state.pending.find(function(o) { return o.operationId === request.ticketId; });
+    if (!op) liveError_('Pending operation not found.');
+    preview.ticketId = op.operationId; preview.intentHash = op.intentHash; preview.count = op.intent.tickets.length;
+    return liveConfirmation_(context,preview);
+  }
+  if (request.scope !== 'ticket' && request.scope !== 'all') liveError_('Invalid reset scope.');
+  if (request.scope === 'all') {
+    if (request.ticketId !== undefined) liveError_('All reset cannot include a ticket.');
+    preview.count = context.state.active.length; preview.admissionIds = context.state.active.map(function(a) { return a.admissionId; });
+    preview.requiresReview = context.state.pending.length > 0 || liveAttendanceNeedsReview_(context).length > 0;
+  } else {
+    combinedLiteralIdentity_(request.ticketId,'Ticket'); preview.ticketId = request.ticketId;
+    var active = context.state.active.filter(function(a) { return a.ticketId === request.ticketId; });
+    preview.count = active.length; preview.admissionIds = active.map(function(a) { return a.admissionId; });
+    preview.currentAssignmentHash = liveCurrentAssignment_(context,request.ticketId);
+    var drift = active.some(function(a) { return a.assignmentHash !== preview.currentAssignmentHash; });
+    preview.requiresReview = context.state.pending.some(function(o) { return o.intent.tickets.indexOf(request.ticketId) >= 0 || ['Mode','ResetAll'].indexOf(o.kind) >= 0; }) ||
+      (drift && request.reviewedAssignmentHash !== preview.currentAssignmentHash);
+    if (drift && !preview.requiresReview) preview.reviewedAssignmentHash = request.reviewedAssignmentHash;
+  }
+  if (preview.requiresReview) return Object.assign(preview,{confirmationToken:''});
+  return liveConfirmation_(context,preview);
+}
+function liveReadConfirmation_(context,request,scope) {
+  if (!liveHex_(request.confirmationToken)) liveError_('Valid confirmation required.');
+  var value = PropertiesService.getScriptProperties().getProperty('studentQrLiveConfirmation:'+hashLive_(request.confirmationToken)), preview;
+  try { preview = JSON.parse(value); } catch (err) { liveError_('Confirmation not found.'); }
+  if (!preview || preview.scope !== scope || preview.eventId !== context.event.eventId || preview.adminHash !== context.event.adminHash || preview.ticketId !== request.ticketId && scope !== 'operation' ||
+      !Number.isSafeInteger(preview.expiresAt) || preview.expiresAt < Date.now()) liveError_('Confirmation mismatch or expired.');
+  if (preview.attendanceRevision !== context.attendanceRevision || preview.rosterRevision !== context.rosterRevision) liveError_('Reset/review snapshot changed; stale confirmation.');
+  return preview;
+}
+function resetLiveTickets_(context,request) {
+  var scope = request.action === 'resetAll' ? 'all' : 'ticket';
+  if (request.scope !== scope || request.expectedAttendanceRevision !== context.attendanceRevision) liveError_('Stale attendance/reset scope.');
+  var preview = liveReadConfirmation_(context,request,scope);
+  if (preview.requiresReview || scope === 'all' && (context.state.pending.length || liveAttendanceNeedsReview_(context).length)) liveError_('Pending/Needs Review cannot be bypassed by Reset All.');
+  if (preview.reviewedAssignmentHash && request.reviewedAssignmentHash !== preview.reviewedAssignmentHash) liveError_('Explicit current assignment review required.');
+  var ids = preview.admissionIds;
+  if (!Array.isArray(ids) || !ids.length || ids.some(function(id) { return !context.state.active.some(function(a) { return a.admissionId === id; }); })) liveError_('No confirmed active admissions to reset.');
+  var tickets = context.state.active.filter(function(a) { return ids.indexOf(a.admissionId) >= 0; }).map(function(a) { return a.ticketId; });
+  var intent = liveIntent_(context,request,scope === 'all'?'ResetAll':'ResetTicket',tickets); intent.revoke = ids.slice();
+  var finalContext = commitLiveOperation_(context,intent), result = liveOperationResult_(finalContext,finalContext.state.operations.find(function(o) { return o.operationId === request.operationId; }));
+  if (scope === 'ticket') result.row = result.currentRow; return result;
+}
+function reviewLiveOperation_(context,request) {
+  if (request.revision !== context.revision || ['cancel','complete'].indexOf(request.decision) < 0) liveError_('Fresh explicit review decision required.');
+  var op = context.state.pending.find(function(o) { return o.operationId === request.operationId; });
+  if (!op || op.intentHash !== request.intentHash) liveError_('Pending intent changed; reload.');
+  var proofRequest = Object.assign({},request,{ticketId:request.operationId});
+  var confirmation = liveReadConfirmation_(context,proofRequest,'operation');
+  if (confirmation.ticketId !== op.operationId || confirmation.intentHash !== op.intentHash) liveError_('Wrong pending operation confirmation.');
+  if (request.decision === 'complete') {
+    if (context.state.pending.some(function(o) { return o.operationId !== op.operationId; })) liveError_('Review other Pending operations first.');
+    if (op.kind === 'Admit') {
+      var cleanRoster = buildLiveRoster_(context.source,Object.assign({},context.state,{pending:[]}));
+      var payload = op.intent.admissions[0], subject = payload && cleanRoster.subjects.find(function(s) { return s.ticketId === liveParseJson_(payload[4]); });
+      if (context.config.testMode || !subject || subject.assignmentHash !== payload[6] || context.state.active.some(function(a) { return a.ticketId === subject.ticketId; })) liveError_('Cannot complete changed/admitted/read-only assignment. Cancel and review ticket.');
+    }
+    if (op.kind === 'Correct') {
+      var cleanState = Object.assign({},context.state,{pending:[]}), clean = Object.assign({},context,{state:cleanState,roster:buildLiveRoster_(context.source,cleanState)});
+      var edits = op.intent.corrections.map(function(p) { var row = clean.roster.records.find(function(r) { return r.sourceRow === Number(p[2]); }); return {recordId:row&&row.recordId,sourceRow:Number(p[2]),baseHash:p[3],correctionVersion:p[4],fields:liveParseJson_(p[5])}; });
+      prepareLiveCorrections_(clean,edits);
+    }
+    // Completion never invents a missing payload; incomplete staging must be cancelled.
+  }
+  var finalContext = liveFinishOperation_(context,op.operationId,request.decision === 'cancel'?'Cancelled':'Committed');
+  return liveOperationResult_(finalContext,finalContext.state.operations.find(function(o) { return o.operationId === op.operationId; }));
+}
 function dispatchLiveAction_(binding,event,role,request) {
   var context = readLiveContext_(binding,event); context.role = role; context.request = request;
   if (request.action === 'getEvent') {
@@ -139,7 +239,8 @@ function dispatchLiveAction_(binding,event,role,request) {
   }
   if (request.action === 'list') return {rows:livePublicRows_(context),testMode:context.config.testMode,revision:context.revision,rosterRevision:context.rosterRevision,attendanceRevision:context.attendanceRevision,quarantineCount:context.roster.attention.length};
   if (request.action === 'getAttention') return {records:context.roster.attention,revision:context.revision,rosterRevision:context.rosterRevision,attendanceRevision:context.attendanceRevision,
-    pending:context.state.pending.map(function(op) { return {operationId:op.operationId,kind:op.kind,intentHash:op.intentHash,tickets:op.intent.tickets}; })};
+    pending:context.state.pending.map(function(op) { return {operationId:op.operationId,kind:op.kind,intentHash:op.intentHash,tickets:op.intent.tickets}; }),
+    attendanceReview:liveAttendanceNeedsReview_(context).map(function(a) { return {ticketId:a.ticketId,admissionId:a.admissionId,previousAssignmentHash:a.assignmentHash,currentAssignmentHash:liveCurrentAssignment_(context,a.ticketId)}; })};
   if (request.action === 'getOperation') return getLiveOperation_(context,request);
   if (LIVE_MUTATIONS.indexOf(request.action) >= 0 && request.action !== 'reviewOperation') {
     var replay = liveReplayRequest_(context,request); if (replay) return replay; liveMutationFresh_(context,request);
