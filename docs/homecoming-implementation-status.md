@@ -76,7 +76,14 @@ published to helpers. Misplaced personal text and computed ticket errors are
 never mirrored or exposed as identities. The
 anonymized validation preserved raw ticket/declaration/identity-conflict types,
 without persisting real names or IDs. No source formatting, values, formulas or
-attendance were changed. No real mirror workbook has yet been created.
+attendance were changed.
+
+The dedicated school-owned mirror API project now contains all three modules.
+Owner preparation created the distinct private mirror; direct connector reads
+confirmed the same counts, fictional-only names/IDs, matching prepared snapshot,
+zero formulas and an empty Check-ins ledger. Drive permission metadata reports
+only Eve's school-account owner, with shared=false. Its binding remains prepared,
+not ready; no event keys or public web deployment have been created.
 
 Provision the private mirror through the owner-only preparation function, then
 obtain the specific Google access/deployment/publication approvals in the phone
@@ -84,12 +91,14 @@ test runbook. Do not substitute the synthetic preview for that real mirror.
 
 ## Final Local Gate
 
-The current full scanner suite passes **315/315** tests. Independent review's
+The current full scanner suite passes **319/319** tests. Independent review's
 five original findings and two quarantine findings received regression tests
 observed failing before their fixes and passing afterward. The quarantine
 checks cover duplicate pairs, ambiguous/padded codes, spreadsheet ticket errors,
 non-ticket personal text, missing/malformed quarantine and blocking in both
-modes. `git diff --check` passes. Browser checks additionally confirmed visible
+modes. Four additional exact-cell diagnostic regressions cover blank guest name,
+blank student name, contradictory guest declaration and control characters,
+without returning raw identity values. `git diff --check` passes. Browser checks additionally confirmed visible
 quarantine notices and rejection in both modes, separate guest admission and
 same-timestamp duplicate rejection across tabs. Physical iPhone validation and
 hosted/provider proof remain outstanding.

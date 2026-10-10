@@ -90,11 +90,18 @@ function projectLocatedHomecomingIntake_(values, sheet) {
       var row = values[i];
       if (!Array.isArray(row) || row.every(combinedEmptyCell_)) continue;
       var n = i + 1;
+      [['A', 0], ['F', 5]].forEach(function(field) {
+        if (field[0] === 'F' && row[4] !== 'Yes') return;
+        if (typeof row[field[1]] !== 'string' || !row[field[1]].trim()) notes.push(field[0] + n + ': required full-name text is missing.');
+      });
       [['B', 1], ['C', 2]].forEach(function(field) {
-        if (typeof row[field[1]] !== 'string' || !row[field[1]] || row[field[1]].trim() !== row[field[1]]) notes.push(field[0] + n + ': identity must be literal raw text.');
+        if (typeof row[field[1]] !== 'string' || !row[field[1]] || row[field[1]].trim() !== row[field[1]] ||
+            /[\u0000-\u001f\u007f-\u009f]/.test(row[field[1]])) notes.push(field[0] + n + ': identity must be literal raw text without padding or control characters.');
       });
       if (!['Yes', 'No', '', null].includes(row[4])) notes.push('E' + n + ': guest declaration must be Yes, No or empty.');
-      if (row[4] === 'Yes' && (typeof row[9] !== 'string' || !row[9])) notes.push('J' + n + ': guest ticket is missing or not literal text.');
+      if (['No', '', null].includes(row[4]) && (!combinedEmptyCell_(row[5]) || !combinedEmptyCell_(row[9]))) notes.push('E' + n + ': guest name/ticket contradict this declaration.');
+      if (row[4] === 'Yes' && (typeof row[9] !== 'string' || !row[9] || row[9].trim() !== row[9] ||
+          /[\u0000-\u001f\u007f-\u009f]/.test(row[9]))) notes.push('J' + n + ': guest ticket is missing or not literal unpadded text without control characters.');
       if (ids.has(row[1]) && row[1]) notes.push('B' + n + ': duplicate source identity with B' + ids.get(row[1]) + '.');
       ids.set(row[1], n);
       [[row[2], 'C'], [row[4] === 'Yes' ? row[9] : '', 'J']].forEach(function(entry) {

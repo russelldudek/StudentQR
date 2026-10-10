@@ -163,3 +163,13 @@ test('strict mirror read reports exact numeric-ticket cell without coercing the 
   assert.equal(f.books.get('mirror').getSheetByName('Ticket Checklist').values[6][2], 83);
   assert.equal(f.writes().length, 0);
 });
+for (const [cell, row, column, value] of [['F6',5,5,''], ['A7',6,0,''], ['E6',5,4,'No'], ['C7',6,2,'083\u0001']]) {
+  test('owner-only diagnostics locate ' + cell + ' without exposing raw identity or changing source', () => {
+    const f = fixture(); f.ready(); const sheet = f.books.get('mirror').getSheetByName('Ticket Checklist');
+    sheet.values[row][column] = value;
+    const before = JSON.stringify(sheet.values), result = f.request({ action: 'list' });
+    assert.match(result.error, new RegExp('\\b' + cell + ':'));
+    assert.doesNotMatch(result.error, /Practice Student|Practice Guest|SID-|083\u0001/);
+    assert.equal(JSON.stringify(sheet.values), before); assert.equal(f.writes().length, 0);
+  });
+}
