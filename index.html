@@ -1427,7 +1427,7 @@
           first,
           last,
           qr: readTicketValue(r, cfg),
-          status: readRowValue(r, cfg.statusCol, ['Status']) || 'Missing',
+          status: readRowValue(r, cfg.statusCol, ['Status']) || (cfg.apiVersion === 2 ? 'Not Checked In' : 'Missing'),
           guestValue,
           bringingGuest: isGuestFlagEnabled(guestValue),
           admittedAt: readRowValue(r, cfg.admittedAtCol, ['Admitted At', 'admitted_at']),
@@ -1587,7 +1587,7 @@
           </tr>`;
       }).join('');
 
-      const total = state.rows.filter(r => r.status !== 'Quarantined').length;
+      const total = state.rows.filter(r => !['Quarantined', 'Blocked'].includes(r.status)).length;
       const admitted = state.rows.filter(r => normalizeKey(r.status) === normalizeKey(state.config?.admittedValue || 'Admitted')).length;
       const guestCount = state.rows.filter(r => r.bringingGuest).length;
       const missing = total - admitted;
@@ -1596,10 +1596,10 @@
         <div class="stat"><div class="muted">Total</div><div class="value">${total}</div></div>
         <div class="stat"><div class="muted">Admitted</div><div class="value">${admitted}</div></div>
         <div class="stat"><div class="muted">Bringing Guest</div><div class="value">${guestCount}</div></div>
-        <div class="stat"><div class="muted">Other/Missing</div><div class="value">${missing}</div></div>
+        <div class="stat"><div class="muted">${isLiveProtocol() ? 'Not Checked In' : 'Other/Missing'}</div><div class="value">${missing}</div></div>
       `;
 
-      if (state.config?.rosterMode === 'homecoming-2026') ids('stats').innerHTML += `<div class="stat">Students <strong>${state.rows.filter(r => r.personType === 'Student').length}</strong></div><div class="stat">Guests <strong>${state.rows.filter(r => r.personType === 'Guest').length}</strong></div><div class="stat">Quarantined tickets <strong>${state.rows.filter(r => r.status === 'Quarantined').length}</strong></div>`;
+      if (state.config?.rosterMode === 'homecoming-2026') ids('stats').innerHTML += `<div class="stat">Students <strong>${state.rows.filter(r => r.personType === 'Student').length}</strong></div><div class="stat">Guests <strong>${state.rows.filter(r => r.personType === 'Guest').length}</strong></div><div class="stat">Quarantined tickets <strong>${state.rows.filter(r => ['Quarantined', 'Blocked'].includes(r.status)).length}</strong></div>`;
       updateTestModeUi();
     }
 
@@ -1630,7 +1630,7 @@
       const target = ids('scannerGuestFlag');
       target.className = row.linkedTicketId ? 'scanner-guest-flag' : 'stat';
       target.innerHTML = row.linkedTicketId
-        ? `<div class="guest-flag-title">${row.personType === 'Guest' ? 'Associated student' : 'Bringing guest: Yes'}</div><div class="guest-flag-detail">${escapeHtml(row.linkedName)}<br>Ticket: ${escapeHtml(row.linkedTicketId)}<br>Status: ${escapeHtml(row.linkedStatus)}<br>Admitted at: ${escapeHtml(row.linkedAdmittedAt || '-')}<br>Each ticket is checked in separately.</div>`
+        ? `<div class="guest-flag-title">${row.personType === 'Guest' ? 'Associated student' : 'Bringing guest: Yes'}</div><div class="guest-flag-detail">${escapeHtml(row.linkedName)}<br>Ticket: ${escapeHtml(row.linkedTicketId)}<br>Status: ${escapeHtml(row.linkedStatus || (isLiveProtocol() ? 'Not Checked In' : ''))}<br>Admitted at: ${escapeHtml(row.linkedAdmittedAt || '-')}<br>Each ticket is checked in separately.</div>`
         : '<div class="muted">Bringing guest: No</div>';
     }
 

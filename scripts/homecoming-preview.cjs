@@ -23,11 +23,12 @@ const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/javascript');
     res.end(`const previewFetch=window.fetch.bind(window);window.fetch=(url,init)=>{if(url===${JSON.stringify(endpoint)})return previewFetch('/api',init);const target=new URL(url,location.href);if(target.origin!==location.origin)throw Error('PREVIEW EXTERNAL NETWORK REFUSED');return previewFetch(url,init);};`); return;
   }
-  const file = url.pathname === '/' ? 'index.html' : url.pathname === '/assets/zxing-0.21.3.min.js' ? 'assets/zxing-0.21.3.min.js' : null;
+  const assets = new Set(['assets/zxing-0.21.3.min.js','assets/homecoming-live.js','assets/ticket-decoder.js','assets/vendor/jsqr-1.4.0.js','assets/vendor/qrcodejs-1.0.0.js','assets/vendor/zxing-wasm-3.1.5/reader.js','assets/vendor/zxing-wasm-3.1.5/zxing_reader.wasm']);
+  const file = url.pathname === '/' ? 'index.html' : assets.has(url.pathname.slice(1)) ? url.pathname.slice(1) : null;
   if (!file) { res.writeHead(404); res.end(); return; }
   let data = fs.readFileSync(path.join(root, file));
   if (file === 'index.html') data = data.toString().replace(/<script src="https:[^"]+"><\/script>/g, '').replace('<script>', '<script src="/preview-harness.js"></script><script>');
-  res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html' : 'application/javascript'); res.end(data);
+  res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html' : file.endsWith('.wasm') ? 'application/wasm' : 'application/javascript'); res.end(data);
 });
 server.listen(3894, '127.0.0.1', () => {
   const base = 'http://127.0.0.1:3894/?event=event-1&api=' + encodeURIComponent(endpoint);

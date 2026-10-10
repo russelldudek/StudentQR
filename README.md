@@ -1,5 +1,14 @@
 # Prom Check-In System (Scaffold)
 
+## Homecoming Live Candidate
+
+The separate version-2 backend in `apps-script/live/` adds automatic single-ticket
+check-in, Eve's audited correction layer, receipt-bound helper undo and Eve-only
+reset previews. It does not replace or modify the accepted mirror backend.
+See [Live Operations](docs/homecoming-live-runbook.md) for native provisioning,
+practice, release gates and phone tests. New local tests do not establish that
+the real backend has been deployed or activated.
+
 This repository contains a starter scaffold for a prom check-in system.
 
 ## GitHub Pages + Google Sheets

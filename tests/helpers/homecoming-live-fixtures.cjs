@@ -20,7 +20,7 @@ function liveFixture(options = {}) {
       function range(r,c,nr=1,nc=1) {
         const read = data => {check('read'); trace.push(['read',id,name]);return Array.from({length:nr},(_,a)=>Array.from({length:nc},(_,b)=>data[r+a-1]?.[c+b-1]??''));};
         const api = {getValues:()=>read(values),getFormulas:()=>read(formulas),setNumberFormat(){return api;},
-          setValues(data){check('write'); if(id!=='live-test'||name==='Ticket Checklist')throw Error('REAL/SOURCE WRITE REFUSED');trace.push(['write',id,name,r,c,data]);data.forEach((row,a)=>row.forEach((v,b)=>{values[r+a-1]||=[];values[r+a-1][c+b-1]=v;}));fault.afterWrite?.(name,r,c);return api;},
+          setValues(data){check('write'); if(!id.startsWith('practice-created-')&&(id!=='live-test'||name==='Ticket Checklist'))throw Error('REAL/SOURCE WRITE REFUSED');trace.push(['write',id,name,r,c,data]);data.forEach((row,a)=>row.forEach((v,b)=>{values[r+a-1]||=[];values[r+a-1][c+b-1]=v;}));fault.afterWrite?.(name,r,c);return api;},
           setValue(v){check('status');return api.setValues([[v]]);},
           setRichTextValues(data){return api.setValues(data.map(row=>row.map(v=>v.text)));}};
         return api;
@@ -34,12 +34,12 @@ function liveFixture(options = {}) {
   book('live-test',options.source||source());
   const ctx = vm.createContext({console,Date,JSON,Object,Array,String,Number,Map,Set,Error,Math,
     fetch(){throw Error('REAL NETWORK REFUSED');},
-    PropertiesService:{getScriptProperties:()=>({getProperty:k=>properties.get(k)??null,setProperty(k,v){check('property');properties.set(k,v);}})},
+    PropertiesService:{getScriptProperties:()=>({getProperty:k=>properties.get(k)??null,getProperties:()=>Object.fromEntries(properties),deleteProperty:k=>properties.delete(k),setProperty(k,v){check('property');properties.set(k,v);}})},
     LockService:{getScriptLock:()=>({tryLock(){fault.onLock?.();if(locked)return false;locked=true;return true;},releaseLock(){locked=false;}})},
     Utilities:{getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,s)=>[...crypto.createHash('sha256').update(s).digest()]},
     Session:{getScriptTimeZone:()=> 'America/New_York'},
     ScriptApp:{getService:()=>({getUrl:()=> 'https://script.google.com/macros/s/FICTIONAL_LIVE/exec'})},
-    SpreadsheetApp:{openById(id){trace.push(['open',id]);if(!books.has(id))throw Error('Unknown target');return books.get(id);},flush(){check('flush');},newRichTextValue:()=>({setText(text){this.text=text;return this;},build(){return{text:this.text};}})},
+    SpreadsheetApp:{openById(id){trace.push(['open',id]);if(!books.has(id))throw Error('Unknown target');return books.get(id);},create(){check('create');return book('practice-created-'+books.size,[]);},flush(){check('flush');},newRichTextValue:()=>({setText(text){this.text=text;return this;},build(){return{text:this.text};}})},
     ContentService:{MimeType:{JSON:'json'},createTextOutput:value=>({value,setMimeType(){return this;}})}
   });
   const dir=path.join(__dirname,'../../apps-script/live');

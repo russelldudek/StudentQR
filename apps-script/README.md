@@ -1,5 +1,10 @@
 # Google Apps Script Setup
 
+For the new Homecoming live protocol, deploy **only** the eight modules in
+`live/manifest.json` into a separate project. Do not combine them with legacy
+or mirror routes. Follow [Homecoming Live Operations](../docs/homecoming-live-runbook.md).
+The instructions below apply to the retained legacy Students/mirror flow.
+
 Use [Code.gs](./Code.gs) as the backend for the Student QR page.
 
 ## Sheet headers

@@ -11,3 +11,14 @@ test('stopped scan after refresh sends no attendance request',async()=>{const f=
 test('lost admission response reconciles same operation without double check-in',async()=>{const f=liveUi({failResponse:b=>b.action==='admit'});assert.equal(await f.run('loadEventFromUrl()'),true);await f.run('admitByQr("001")');assert.match(f.el('scanResult').innerHTML,/Cannot Admit/);assert.equal(f.backend.list().rows.find(r=>r.QR_ID==='001').Status,'Admitted');await f.run('state.liveController.reconcilePending()');assert.match(f.el('scanResult').innerHTML,/Admitted/);assert.equal(f.calls.filter(c=>c.action==='admit').length,1);});
 test('two tabs reject older receipt after newer tab admission and undo',async()=>{const a=liveUi();await a.run('loadEventFromUrl()');await a.run('admitByQr("001")');const b=liveUi({backend:a.backend,storage:a.storage});await b.run('loadEventFromUrl()');await b.run('admitByQr("083")');await a.run('state.liveController.reconcileLatest()');await a.run('state.liveController.undoLatest()');assert.equal(a.backend.list().rows.find(r=>r.QR_ID==='083').Status,'');assert.equal(a.backend.list().rows.find(r=>r.QR_ID==='001').Status,'Admitted');await b.run('state.liveController.reconcileLatest()');assert.equal(b.el('undoLatestCheckIn').disabled,true);});
 test('attention markup escapes hostile source values',async()=>{const s=source();s[5][0]='<script>alert(1)</script>';s[5][1]='';const f=liveUi({source:s,role:'admin'});await f.run('loadEventFromUrl()');assert.match(f.el('liveAttention').innerHTML,/&lt;script&gt;/);assert.ok(!f.el('liveAttention').innerHTML.includes('<script>'));});
+test('live dashboard excludes blocked tickets and names blank attendance Not Checked In',async()=>{const s=source();s[6][0]='';const f=liveUi({source:s});await f.run('loadEventFromUrl()');assert.equal(f.run('state.rows.find(r=>r.qr==="001").status'),'Not Checked In');assert.match(f.el('stats').innerHTML,/Quarantined tickets <strong>1/);assert.match(f.el('stats').innerHTML,/Total<\/div><div class="value">2/);});
+test('attention publishes only selected records and refuses an empty batch without dispatch',async()=>{
+  const s=source();s[5][0]='';s[6][0]='';const f=liveUi({source:s,role:'admin'});await f.run('loadEventFromUrl()');
+  const attention=f.backend.request({action:'getAttention',token:admin});
+  const forms=attention.records.map((r,i)=>({dataset:{recordId:r.recordId},querySelector:selector=>selector==='[name="includeRecord"]'?{checked:i===0}:{value:selector==='[name="studentName"]'?'Fixed Fiction Student':r.fields[selector.slice(7,-2)]}}));
+  f.el('liveAttention').querySelectorAll=()=>forms;
+  await f.run('state.liveController.publishCorrections()');
+  assert.equal(f.calls.find(c=>c.action==='publishCorrections').edits.length,1);
+  f.el('liveAttention').querySelectorAll=()=>[];
+  const n=f.calls.length;await assert.rejects(f.run('state.liveController.publishCorrections()'),/select|selected/i);assert.equal(f.calls.length,n);
+});

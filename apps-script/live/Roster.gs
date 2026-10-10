@@ -8,8 +8,8 @@ function liveStudentTicket_(value) { return typeof value === 'number' && Number.
 function liveTicketCandidates_(value) {
   var v = liveStudentTicket_(value), result = [];
   if (typeof v === 'string' && v) {
-    result.push(v);
-    if (v.trim() !== v) result.push(v.trim());
+    if (/^[A-Za-z0-9_-]+$/.test(v)) result.push(v);
+    if (v.trim() !== v && /^[A-Za-z0-9_-]+$/.test(v.trim())) result.push(v.trim());
     if (!/^[A-Za-z0-9_-]+$/.test(v)) (v.match(/\d+[A-Za-z]?/g) || []).forEach(function(t) { result.push(t); if (/^\d{1,3}$/.test(t)) result.push(('00'+t).slice(-3)); });
   }
   return Array.from(new Set(result));

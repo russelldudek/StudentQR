@@ -91,7 +91,7 @@
       }
       function renderAttention() {
         const records = attention.records;
-        el('liveAttention').innerHTML = records.length ? records.map(r=>`<form class="live-record" data-record-id="${escapeHtml(r.recordId)}"><h3>Record ${r.sourceRow}: ${escapeHtml(r.fields.studentName||'Missing student name')}</h3><p>${r.issues.map(escapeHtml).join('<br>')}</p><div class="live-fields">${fields.map(k=>`<label>${escapeHtml(k)}<input name="${k}" value="${escapeHtml(r.fields[k]??'')}" autocomplete="off"></label>`).join('')}</div></form>`).join('') : '<p>No conflicting or incomplete tickets.</p>';
+        el('liveAttention').innerHTML = records.length ? '<p>Edit the records you want to fix. Edited records are selected automatically. Publish up to 100 selected records together.</p>'+records.map(r=>`<form class="live-record" data-record-id="${escapeHtml(r.recordId)}"><h3>Record ${r.sourceRow}: ${escapeHtml(r.fields.studentName||'Missing student name')}</h3><p>${r.issues.map(escapeHtml).join('<br>')}</p><label><input type="checkbox" name="includeRecord"> Include this record in publication</label><div class="live-fields">${fields.map(k=>`<label>${escapeHtml(k)}<input name="${k}" value="${escapeHtml(r.fields[k]??'')}" autocomplete="off"></label>`).join('')}</div></form>`).join('') : '<p>No conflicting or incomplete tickets.</p>';
         el('publishLiveCorrections').disabled = !records.length;
         el('livePending').innerHTML = attention.pending.map(p=>`<div class="live-record"><strong>${escapeHtml(p.kind)} Pending</strong><p>${escapeHtml(p.tickets.join(', '))}</p><button type="button" data-review="${escapeHtml(p.operationId)}" data-decision="cancel">Review / Cancel Pending</button><button type="button" data-review="${escapeHtml(p.operationId)}" data-decision="complete">Review / Complete Pending</button></div>`).join('') + attention.attendanceReview.map(a=>`<div class="live-record"><strong>Attendance assignment changed: ${escapeHtml(a.ticketId)}</strong><p>Review the current student/guest record before resetting this ticket. Reset All cannot bypass this.</p><button type="button" data-drift="${escapeHtml(a.ticketId)}" data-hash="${escapeHtml(a.currentAssignmentHash)}">Review Current Assignment And Reset</button></div>`).join('');
       }
@@ -101,7 +101,10 @@
       }
       function collectEdits() {
         if (!attention) throw Error('Load Needs Attention first.');
-        return Array.from(el('liveAttention').querySelectorAll('form')).map(form=>{
+        const forms = Array.from(el('liveAttention').querySelectorAll('form')).filter(form=>form.querySelector('[name="includeRecord"]').checked);
+        if (!forms.length) throw Error('Select at least one record to publish.');
+        if (forms.length > 100) throw Error('Select no more than 100 records per atomic publication.');
+        return forms.map(form=>{
           const record = attention.records.find(r=>r.recordId===form.dataset.recordId);
           const values = {}; fields.forEach(k=>{values[k]=form.querySelector('[name="'+k+'"]').value;});
           return {recordId:record.recordId,sourceRow:record.sourceRow,baseHash:record.baseHash,correctionVersion:record.correctionVersion,fields:values};
@@ -150,7 +153,7 @@
         el('reconcileLastOperation').disabled = !get('pending');
         if (!isAdmin) { el('liveAttention').innerHTML=''; el('livePending').innerHTML=''; cancelReset(); }
       }
-      el('liveAttention').addEventListener('input',()=>{draft=true;try{el('liveCorrectionDiff').textContent='Review changes before publishing:\n'+JSON.stringify(collectEdits().map(e=>({before:attention.records.find(r=>r.recordId===e.recordId).fields,after:e.fields})),null,2);}catch{}});
+      el('liveAttention').addEventListener('input',event=>{draft=true;const form=event.target.closest('form');if(form&&event.target.name!=='includeRecord')form.querySelector('[name="includeRecord"]').checked=true;try{el('liveCorrectionDiff').textContent='Review selected changes before publishing:\n'+JSON.stringify(collectEdits().map(e=>({before:attention.records.find(r=>r.recordId===e.recordId).fields,after:e.fields})),null,2);}catch(err){el('liveCorrectionDiff').textContent=err.message;}});
       el('livePending').addEventListener('click',event=>{const target=event.target;if(target.dataset.review)reviewOperation(target.dataset.review,target.dataset.decision).catch(err=>message(err.message));if(target.dataset.drift)previewReset('ticket',target.dataset.drift,target.dataset.hash).catch(err=>message(err.message));});
       root.addEventListener?.('storage',()=>{el('undoLatestCheckIn').disabled=true;reconcileLatest();});
       updateUi(); return {submitTicket,undoLatest,loadAttention,publishCorrections,previewReset,confirmReset,cancelReset,reviewOperation,reconcileOperation,reconcileLatest,setMode,rename,updateUi,refreshAttention,
